@@ -63,8 +63,8 @@ def main() -> None:
         bright = col("brightness", "bright_ti4", "bright_ti5", "bright_t21", "bright_t31")
         bright31 = col("bright_t31", "bright_ti5")
         file = '"filename"'
-        sensor = f"CASE WHEN regexp_matches(lower({file}), 'modis|terra|aqua') OR lower(coalesce({sat},'')) IN ('terra','aqua') THEN 'MODIS' WHEN regexp_matches(lower({file}), 'viirs|snpp|npp|noaa.?20|noaa.?21') OR lower(coalesce({sat},'')) IN ('n','npp','snpp','noaa20','noaa-20','n20','noaa21','noaa-21','n21') THEN 'VIIRS' ELSE 'UNKNOWN' END"
-        satellite = f"CASE WHEN regexp_matches(lower({file}), 'noaa.?21') OR lower(coalesce({sat},'')) IN ('noaa21','noaa-21','n21') THEN 'NOAA-21' WHEN regexp_matches(lower({file}), 'noaa.?20') OR lower(coalesce({sat},'')) IN ('noaa20','noaa-20','n20') THEN 'NOAA-20' WHEN regexp_matches(lower({file}), 'snpp|suomi.?npp') OR lower(coalesce({sat},'')) IN ('n','npp','snpp') THEN 'Suomi-NPP' WHEN lower(coalesce({sat},'')) IN ('terra','aqua') THEN initcap(lower({sat})) WHEN regexp_matches(lower({file}), 'terra') THEN 'Terra' WHEN regexp_matches(lower({file}), 'aqua') THEN 'Aqua' ELSE coalesce({sat}, regexp_extract({file}, '([^/\\\\]+)\\.csv$', 1)) END"
+        sensor = f"CASE WHEN regexp_matches(lower({file}), 'modis|terra|aqua') OR lower(coalesce({sat},'')) IN ('terra','aqua') THEN 'MODIS' WHEN regexp_matches(lower({file}), 'viirs|snpp|npp|noaa.?20|noaa.?21|jpss.?1') OR lower(coalesce({sat},'')) IN ('n','npp','snpp','noaa20','noaa-20','n20','noaa21','noaa-21','n21') THEN 'VIIRS' ELSE 'UNKNOWN' END"
+        satellite = f"CASE WHEN regexp_matches(lower({file}), 'noaa.?21') OR lower(coalesce({sat},'')) IN ('noaa21','noaa-21','n21') THEN 'NOAA-21' WHEN regexp_matches(lower({file}), 'noaa.?20|jpss.?1') OR lower(coalesce({sat},'')) IN ('noaa20','noaa-20','n20') THEN 'NOAA-20' WHEN regexp_matches(lower({file}), 'snpp|suomi.?npp') OR lower(coalesce({sat},'')) IN ('n','npp','snpp') THEN 'Suomi-NPP' WHEN lower(coalesce({sat},'')) = 'terra' THEN 'Terra' WHEN lower(coalesce({sat},'')) = 'aqua' THEN 'Aqua' WHEN regexp_matches(lower({file}), 'terra') THEN 'Terra' WHEN regexp_matches(lower({file}), 'aqua') THEN 'Aqua' ELSE coalesce({sat}, regexp_extract({file}, '([^/\\\\]+)\\.csv$', 1)) END"
         raw_day = f"try_cast(try_strptime(substr({raw_date},1,10), '%Y-%m-%d') AS DATE)"
         raw_dt = f"try_cast({raw_date} AS TIMESTAMP)"
         day_expr = f"coalesce({raw_day}, CAST({raw_dt} AS DATE))"
@@ -129,7 +129,7 @@ def main() -> None:
 
     db.execute("COPY (SELECT * FROM harmonized_daily ORDER BY acq_date, cell_id) TO ? (HEADER, DELIMITER ',')", [str(args.output / "harmonized_hotspots.csv")])
     db.execute("COPY (SELECT * FROM harmonized_daily ORDER BY acq_date, cell_id) TO ? (FORMAT PARQUET)", [str(args.output / "harmonized_hotspots.parquet")])
-    monthly = db.execute("SELECT year(acq_date) year, month(acq_date) month, count(*) count, sum(hfai) hfai, sum(calibrated_frp) frp FROM harmonized_daily GROUP BY 1,2 ORDER BY 1,2").fetchall()
+    monthly = db.execute("SELECT year(acq_date) AS yr, month(acq_date) AS mo, count(*) AS cnt, CAST(sum(hfai) AS DOUBLE) AS hfai, CAST(sum(calibrated_frp) AS DOUBLE) AS frp FROM harmonized_daily GROUP BY 1,2 ORDER BY 1,2").fetchall()
     monthly_rows = [dict(zip(("year", "month", "count", "hfai", "frp"), row)) for row in monthly]
     for row in monthly_rows:
         baseline = sorted(r["hfai"] for r in monthly_rows if r["month"] == row["month"] and r["year"] != row["year"])

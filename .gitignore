@@ -5,3 +5,8 @@ dist/
 output/
 .playwright-mcp/
 __pycache__/
+data/
+*.duckdb
+*.parquet
+*.csv
+test-results/

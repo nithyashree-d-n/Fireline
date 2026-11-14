@@ -1,101 +1,1183 @@
 import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Map as MapLibreMap, NavigationControl, Popup, setWorkerUrl } from 'maplibre-gl';
+import { Map as MapLibreMap, NavigationControl, AttributionControl, Popup, setWorkerUrl } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import './style.css';
 
-const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-const today = new Date();
-const todayIso = today.toISOString().slice(0,10);
-const mapboxToken = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN?.trim();
-const land = {type:'FeatureCollection',features:[
-  [[-168,70],[-140,70],[-125,55],[-130,48],[-117,32],[-105,22],[-96,18],[-83,8],[-78,8],[-80,25],[-97,29],[-105,49],[-123,49],[-130,58],[-150,60],[-168,70]],
-  [[-81,12],[-69,10],[-50,-3],[-35,-8],[-48,-28],[-55,-55],[-72,-48],[-78,-20],[-81,12]],
-  [[-18,36],[-7,37],[10,35],[30,31],[43,12],[50,-12],[38,-35],[20,-35],[10,-18],[-2,-5],[-17,15],[-18,36]],
-  [[-10,36],[-9,58],[3,71],[28,70],[38,58],[30,46],[15,36],[-10,36]],
-  [[28,70],[55,75],[90,72],[130,62],[160,60],[178,52],[150,45],[136,35],[122,22],[110,5],[100,10],[86,22],[68,25],[58,35],[45,40],[36,52],[28,70]],
-  [[112,-11],[153,-12],[154,-27],[140,-39],[118,-34],[112,-11]],
-  [[-52,60],[-40,60],[-22,70],[-28,82],[-45,83],[-54,72],[-52,60]]
-].map(coords=>({type:'Feature',properties:{},geometry:{type:'Polygon',coordinates:[coords.map(([x,y])=>[x,y])]}}))};
-const demo = (() => {
-  const hotspots = [];
-  for (let year = 2001; year <= today.getFullYear(); year++) for (let month = 1; month <= (year===today.getFullYear()?today.getMonth()+1:12); month++) {
-    const base = Math.max(0, Math.round((15 + 12*Math.sin((month-1)*Math.PI/6) + ((year*month*7)%23)) * (year > 2012 ? 1.04 : 0.92)));
-    const event = ((year * 17 + month * 9) % 37 === 0) ? 3.1 : 1;
-    const n = Math.round(base * event);
-    for (let i = 0; i < n; i++) {
-      const regions = [[-62,-9],[-52,-6],[24,1],[102,14],[-121,45],[135,-24],[30,52]];
-      const [x,y] = regions[(i + year + month) % regions.length];
-      const jitter = (k) => ((Math.sin(year*19 + month*31 + i*7 + k)*10000)%1)*2.5;
-      const dayLimit=year===today.getFullYear()&&month===today.getMonth()+1?today.getDate():new Date(year,month,0).getDate();
-      const day = 1 + ((i*7 + month*3) % dayLimit);
-      hotspots.push({sensor:year < 2012?'MODIS':(i%3?'VIIRS':'MODIS'),satellite:year<2012?'Terra':'Suomi-NPP',acq_date:`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`,acq_time:'1200',lat:y+jitter(1),lon:x+jitter(2),frp:Math.round((4+(i*13)%220)*10)/10,calibrated_frp:Math.round((4+(i*13)%220)*10)/10,confidence_norm:i%4?'nominal':'high',hotspot_count:1,hfai:1,cell_id:`demo-${year}-${month}-${i}`});
-    }
-  }
-  const months = [];
-  for(let year=2001;year<=2026;year++) for(let month=1;month<=12;month++){
-    const count=hotspots.filter(h=>+h.acq_date.slice(0,4)===year && +h.acq_date.slice(5,7)===month).length;
-    const values=Array.from({length:year-2001},(_,i)=>hotspots.filter(h=>+h.acq_date.slice(0,4)===2001+i && +h.acq_date.slice(5,7)===month).length).sort((a,b)=>a-b);
-    const median=values.length?values[Math.floor(values.length/2)]:count;
-    months.push({year,month,count,hfai:count,median_hfai:median,anomaly_pct:median?Math.round((count-median)/median*100):0});
-  }
-  return {demo:true,grid:'illustrative preview',hotspots,months,overlap:{scaling:{MODIS:1,VIIRS:1},cell_days:{MODIS:0,VIIRS:0}}};
-})();
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-function App(){
-  setWorkerUrl(workerUrl);
-  const [data,setData]=useState(demo); const [bbox,setBbox]=useState([-180,-90,180,90]);
-  const [from,setFrom]=useState('2001-01-01'); const [to,setTo]=useState(todayIso);
-  const [anomaly,setAnomaly]=useState(false); const [metric,setMetric]=useState('count'); const [notice,setNotice]=useState('');
-  const mapEl=useRef(null),mapRef=useRef(null);
-  useEffect(()=>{fetch('/app_data.json').then(r=>r.ok?r.json():null).then(d=>{if(d?.hotspots?.length)setData(d)}).catch(()=>{});},[]);
-  const allPoints=useMemo(()=>data.hotspots.filter(h=>h.lon>=bbox[0]&&h.lon<=bbox[2]&&h.lat>=bbox[1]&&h.lat<=bbox[3]),[data,bbox]);
-  const points=useMemo(()=>allPoints.filter(h=>h.acq_date>=from&&h.acq_date<=to),[allPoints,from,to]);
-  const months=useMemo(()=>{const a=new Map(); for(const r of points){const key=r.acq_date.slice(0,7),value=metric==='count'?Number(r.hotspot_count||1):Number(r.hfai||1);a.set(key,(a.get(key)||0)+value);} return a;},[points,metric]);
-  const monthHfai=useMemo(()=>{const a=new Map();for(const r of points){const key=r.acq_date.slice(0,7);a.set(key,(a.get(key)||0)+Number(r.hfai||1));}return a;},[points]);
-  const baseline=useMemo(()=>{const yearsByMonth=new Map();for(const r of allPoints){const month=+r.acq_date.slice(5,7),year=+r.acq_date.slice(0,4),slot=`${year}-${String(month).padStart(2,'0')}`,a=yearsByMonth.get(slot)||{year,month,value:0};a.value+=Number(r.hfai||1);yearsByMonth.set(slot,a);}const result=new Map();for(const {year,month} of yearsByMonth.values()){const values=[...yearsByMonth.values()].filter(x=>x.month===month&&x.year!==year).map(x=>x.value).sort((a,b)=>a-b);const mid=values.length?values[Math.floor(values.length/2)]:0;const mean=values.length?values.reduce((s,x)=>s+x,0)/values.length:0;const std=values.length?Math.sqrt(values.reduce((s,x)=>s+(x-mean)**2,0)/values.length):0;result.set(`${year}-${String(month).padStart(2,'0')}`,{median:mid,std,anomaly_pct:mid?((yearsByMonth.get(`${year}-${String(month).padStart(2,'0')}`).value-mid)/mid)*100:null,z_score:std?(yearsByMonth.get(`${year}-${String(month).padStart(2,'0')}`).value-mid)/std:null});}return result;},[allPoints]);
-  const years=useMemo(()=>{const all=[...data.months.map(x=>x.year),...points.map(x=>+x.acq_date.slice(0,4))]; const lo=Math.max(2001,Math.min(...all,2001)),hi=Math.max(...all,2026);return Array.from({length:hi-lo+1},(_,i)=>lo+i)},[data,points]);
-  const max=Math.max(1,...months.values()); const peak=names.map((_,i)=>[i+1,[...months].filter(([k])=>+k.slice(5)===i+1).reduce((s,[,v])=>s+v,0)]).sort((a,b)=>b[1]-a[1])[0];const latestKey=[...months.keys()].sort().at(-1);const latestStats=latestKey?baseline.get(latestKey):null;const latestValue=latestKey?(monthHfai.get(latestKey)||0):0;
-  useEffect(()=>{
-    if(!mapEl.current||mapRef.current)return;
-    const fallbackStyle={version:8,sources:{},layers:[{id:'base',type:'background',paint:{'background-color':'#172226'}}]};
-    const style=mapboxToken?`https://api.mapbox.com/styles/v1/mapbox/dark-v11?access_token=${encodeURIComponent(mapboxToken)}`:fallbackStyle;
-    const map=new MapLibreMap({container:mapEl.current,style,center:[0,13],zoom:0.35,attributionControl:false,dragRotate:false});
-    map.addControl(new NavigationControl({showCompass:false}),'top-right');
-    map.on('load',()=>{map.addSource('land',{type:'geojson',data:land});map.addLayer({id:'land',type:'fill',source:'land',paint:{'fill-color':'#263a36','fill-outline-color':'#52655b'}});map.addSource('fires',{type:'geojson',data:{type:'FeatureCollection',features:[]}});map.addLayer({id:'fires',type:'circle',source:'fires',paint:{'circle-radius':['interpolate',['linear'],['zoom'],0,2,5,6],'circle-color':'#ffae5c','circle-opacity':0.78,'circle-stroke-width':0.5,'circle-stroke-color':'#fff0d4'}});map.addSource('aoi',{type:'geojson',data:{type:'FeatureCollection',features:[]}});map.addLayer({id:'aoi-fill',type:'fill',source:'aoi',paint:{'fill-color':'#51c6a8','fill-opacity':0.13}});map.addLayer({id:'aoi-line',type:'line',source:'aoi',paint:{'line-color':'#51c6a8','line-width':2,'line-dasharray':[3,2]}});});
-    map.on('click','fires',e=>{const p=e.features?.[0]?.properties;if(!p)return;const content=document.createElement('div');content.textContent=`${p.sensor} · ${p.satellite} · ${p.date}`;new Popup({closeButton:true}).setLngLat(e.lngLat).setDOMContent(content).addTo(map);});
-    map.on('mouseenter','fires',()=>{map.getCanvas().style.cursor='pointer'});map.on('mouseleave','fires',()=>{map.getCanvas().style.cursor='crosshair'});
-    let start=null; const canvas=map.getCanvas();
-    const xy=e=>{const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]};
-    const down=e=>{if(e.button!==0)return;start=map.unproject(xy(e));map.dragPan.disable();};
-    const up=e=>{if(!start)return;const end=map.unproject(xy(e));const box=[Math.min(start.lng,end.lng),Math.min(start.lat,end.lat),Math.max(start.lng,end.lng),Math.max(start.lat,end.lat)];if(Math.abs(box[2]-box[0])>.15&&Math.abs(box[3]-box[1])>.15){setBbox(box);document.querySelectorAll('[data-coord]').forEach((el,i)=>el.value=box[i].toFixed(2));}start=null;map.dragPan.enable();};
-    canvas.addEventListener('mousedown',down);window.addEventListener('mouseup',up);mapRef.current=map;
-    return()=>{canvas.removeEventListener('mousedown',down);window.removeEventListener('mouseup',up);map.remove();mapRef.current=null};
-  },[]);
-  useEffect(()=>{const map=mapRef.current;if(!map)return;const update=()=>{if(map.getSource('fires'))map.getSource('fires').setData({type:'FeatureCollection',features:points.map(h=>({type:'Feature',geometry:{type:'Point',coordinates:[h.lon,h.lat]},properties:{date:h.acq_date,frp:h.frp,sensor:h.sensor||'Unknown',satellite:h.satellite||'Unknown'}}))}); if(map.getSource('aoi')){const [w,s,e,n]=bbox;map.getSource('aoi').setData({type:'FeatureCollection',features:[{type:'Feature',geometry:{type:'Polygon',coordinates:[[[w,s],[e,s],[e,n],[w,n],[w,s]]]},properties:{}}]});}};if(map.isStyleLoaded())update();else map.once('load',update)},[points,bbox]);
-  function applyCoords(){const values=[...document.querySelectorAll('[data-coord]')].map(e=>Number(e.value));if(values.every(Number.isFinite)&&values[0]>=-180&&values[2]<=180&&values[1]>=-90&&values[3]<=90&&values[0]<values[2]&&values[1]<values[3]){setBbox(values);mapRef.current?.fitBounds([[values[0],values[1]],[values[2],values[3]]],{padding:50,duration:500});}else setNotice('Enter valid west, south, east, north coordinates.');}
-  function exportCsv(){const fields=['hotspot_id','sensor','satellite','acq_date','acq_time','lat','lon','cell_id','hotspot_count','calibrated_hotspot_count','hfai','frp','calibrated_frp','confidence_norm','brightness','bright_t31','scan','track','source_count','sensors_seen'];const summary=['aoi_west','aoi_south','aoi_east','aoi_north','filter_start','filter_end','filtered_cell_days','filtered_hfai_total','peak_month'];const header=[...fields,...summary];const cell=v=>`"${String(v??'').replaceAll('"','""')}"`;const rows=points.map(p=>[...fields.map(k=>p[k]??''),...bbox,from,to,points.length,totalHfai,names[(peak?.[0]||1)-1]].map(cell));const csv=[header.map(cell).join(','),...rows.map(r=>r.join(','))].join('\r\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='harmonized_fire_activity.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);setNotice(`Exported ${points.length.toLocaleString()} filtered records.`);}
-  const color=v=>{const t=Math.max(0,Math.min(1,v));const ramp=anomaly?['#2b83ba','#abdda4','#ffffbf','#fdae61','#d7191c']:['#ffffcc','#ffeda0','#feb24c','#f03b20','#bd0026'];const q=t*(ramp.length-1),i=Math.min(ramp.length-2,Math.floor(q)),f=q-i;const a=ramp[i].match(/[\da-f]{2}/gi).map(x=>parseInt(x,16)),b=ramp[i+1].match(/[\da-f]{2}/gi).map(x=>parseInt(x,16));return `rgb(${a.map((x,k)=>Math.round(x+(b[k]-x)*f)).join(',')})`};
-  const recordsTotal=points.length; const totalHfai=points.reduce((a,p)=>a+Number(p.hfai||1),0); const mapMax=points.length?Math.max(...points.map(p=>p.frp||1)):1;
-  return <main>
-    <header className="topbar"><a className="brand" href="#"><span className="brandmark">F</span> FIRELINE <small>EARTH OBSERVATION</small></a><nav><a className="active" href="#calendar">Activity calendar</a><a href="#method">Methodology</a></nav><span className="live"><i/> HISTORICAL EXPLORER</span></header>
-    {data.demo&&<div className="demoBanner"><b>DEMO PREVIEW</b> Synthetic hotspot points are shown because no FIRMS input files are present. Run the pipeline with NASA FIRMS CSVs to replace this preview.</div>}
-    <section className="hero"><div><div className="eyebrow"><span/> NASA SPACE APPS CHALLENGE · 2026</div><h1>Burning activity,<br/><em>put into context.</em></h1><p>Explore harmonized MODIS and VIIRS fire detections. See where activity stands against the historical record, from seasonal rhythms to exceptional years.</p><div className="heroTags"><span>MODIS · 2001—PRESENT</span><span>VIIRS · 2012—PRESENT</span><span>0.05° GRID · DAILY</span></div></div><div className="heroStat"><span className="statLabel">AREA ACTIVITY</span><strong>{totalHfai.toLocaleString()}</strong><span>HFAI index units in selected window</span><div className="statRule"/><div className="statMini"><span>HOTSPOT CELL-DAYS</span><b>{recordsTotal.toLocaleString()}</b></div><div className="statMini"><span>PEAK MONTH</span><b>{names[(peak?.[0]||1)-1]}</b></div><div className="statMini"><span>OVERLAP CALIBRATION</span><b>2012 – 2023</b></div></div></section>
-    <section className="workspace"><div className="sectionHead"><div><div className="eyebrow dark">01 / DEFINE YOUR AREA</div><h2>Choose a region to explore</h2></div><span className="hint">DRAG ON MAP TO DRAW A BOUNDING BOX</span></div>
-      <div className="mapPanel"><div ref={mapEl} className="map" aria-label="Interactive fire activity map; drag to select an area of interest"/><div className="mapCaption"><span><i className="dot"/> Hotspot cell-day</span><span className="mapCoords">{bbox.map(v=>v.toFixed(1)).join('°, ')}°</span></div></div>
-      <div className="filters"><div className="coordGroup"><label>WEST<input data-coord defaultValue="-180" aria-label="West longitude"/></label><label>SOUTH<input data-coord defaultValue="-90" aria-label="South latitude"/></label><label>EAST<input data-coord defaultValue="180" aria-label="East longitude"/></label><label>NORTH<input data-coord defaultValue="90" aria-label="North latitude"/></label><button className="outline" onClick={applyCoords}>Apply bounds</button></div><div className="dateGroup"><label>FROM<input type="date" value={from} min="2001-01-01" max={todayIso} onChange={e=>setFrom(e.target.value)}/></label><span>—</span><label>TO<input type="date" value={to} min="2001-01-01" max={todayIso} onChange={e=>setTo(e.target.value)}/></label></div></div>
-    </section>
-    <section className="calendarSection" id="calendar"><div className="sectionHead"><div><div className="eyebrow dark">02 / READ THE RECORD</div><h2>Burning activity calendar</h2><p className="subhead">Monthly activity across years in your selected area</p></div><div className="controls"><div className="segmented"><button className={metric==='count'?'selected':''} onClick={()=>setMetric('count')}>Cell-days</button><button className={metric==='hfai'?'selected':''} onClick={()=>setMetric('hfai')}>HFAI</button></div><button className={`anomaly ${anomaly?'selected':''}`} aria-pressed={anomaly} onClick={()=>setAnomaly(!anomaly)}><span className="toggle"/>{anomaly?'Anomaly view':'Compare anomaly'}</button></div></div>
-      <div className="calendarWrap"><div className="calendar" role="grid" aria-label="Year by month fire activity heatmap"><div className="yearLabel"/><div className="months">{names.map(m=><span key={m}>{m}</span>)}</div>{years.map(y=><React.Fragment key={y}><div className="yearLabel">{y}</div><div className="cells">{names.map((m,i)=>{const key=`${y}-${String(i+1).padStart(2,'0')}`;const val=months.get(key)||0;const base=baseline.get(key)||0;const relative=anomaly?Math.max(0,Math.min(1,.5+.5*(val/Math.max(1,base)-1))):val/max;return <button key={m} className="cell" style={{'--cell':val?color(relative):'#eff0eb'}} title={`${m} ${y}: ${Math.round(val)} ${anomaly?'HFAI, area median '+Math.round(base):metric==='count'?'cell-days':'HFAI'}`} aria-label={`${m} ${y}: ${Math.round(val)} ${anomaly?'HFAI':'cell-days'}`} onClick={()=>{setFrom(`${y}-${String(i+1).padStart(2,'0')}-01`);setTo(`${y}-${String(i+1).padStart(2,'0')}-${new Date(y,i+1,0).getDate()}`)}}/>})}</div></React.Fragment>)}</div></div>
-      <div className="legendRow"><span>{anomaly?'Below historical median':'Lower activity'}</span><div className={`gradient ${anomaly?'diverge':''}`}/><span>{anomaly?'Above historical median':'Higher activity'}</span><span className="legendNote">{anomaly?'Historical departure scale · RdYlBu':'Colorblind-safe intensity scale · YlOrRd'}</span></div>
-      <div className="insightRow"><div><span className="eyebrow dark">SELECTED AREA SUMMARY</span><h3>{recordsTotal.toLocaleString()} <small>cell-days</small></h3><p>Unique 0.05° grid cells with detections after daily overpass deduplication.</p></div><div><span className="eyebrow dark">SEASONAL PEAK</span><h3>{names[(peak?.[0]||1)-1]} <small>is most active</small></h3><p>Highest cumulative harmonized activity in the selected date window.</p></div><div><span className="eyebrow dark">RECORD COVERAGE</span><h3>{years[0]} <small>— {years.at(-1)}</small></h3><p>{data.demo?'Illustrative preview only.':'Based on the loaded FIRMS archive.'} Areas without detections remain uncolored.</p></div></div>
-      <div className="exportBar"><div><b>Take this analysis with you.</b><span>Download filtered harmonized detections as a CSV report.</span></div><button className="primary" onClick={exportCsv}>↓ &nbsp; Download harmonized CSV <span>({recordsTotal.toLocaleString()})</span></button></div>
-    </section>
-    <section id="method" className="method"><div className="eyebrow">03 / HOW TO READ THIS</div><h2>A shared scale for two sensors.</h2><p>Detections from MODIS and VIIRS are assigned to a common approximately 5 km daily grid. Multiple satellite passes in the same cell and UTC date count as one active cell-day; the strongest observation supplies FRP. Overlap-period activity rates scale VIIRS to a MODIS-equivalent index.</p><div className="methodCards"><div><b>01</b><strong>Normalize</strong><span>Standard FIRMS dates, coordinates, confidence, and radiative power.</span></div><div><b>02</b><strong>Deduplicate</strong><span>One cell-day per location; overlapping overpasses do not multiply activity.</span></div><div><b>03</b><strong>Compare</strong><span>Monthly values compared with same-month historical median.</span></div></div><p className="caveat">HFAI is an analytical index for relative activity, not a calibrated measure of burned area or fire intensity. Browse only what the archive contains.</p></section>
-    <footer><span>FIRELINE · NASA FIRMS HARMONIZATION EXPLORER</span><span>For situational context · Not an operational fire alert system</span></footer>
-    {notice&&<div className="toast" role="status">{notice}<button onClick={()=>setNotice('')} aria-label="Dismiss">×</button></div>}
-  </main>
+const PRIORITY_COUNTRIES = [
+  { code: 'United_Kingdom', name: 'United Kingdom (UK)' },
+  { code: 'India', name: 'India' },
+  { code: 'United_States', name: 'United States (USA)' },
+  { code: 'Australia', name: 'Australia' },
+  { code: 'Canada', name: 'Canada' },
+  { code: 'Brazil', name: 'Brazil' },
+  { code: 'Spain', name: 'Spain' }
+];
+
+const YLORRD_RAMP = ['#ffffcc', '#fed976', '#feb24c', '#fd8d3c', '#f03b20', '#bd0026', '#67001f'];
+
+// Reverse geocoding helper using OpenStreetMap Nominatim with local memory caching
+const geoCache = new Map();
+async function fetchLocationName(lat, lon, fallbackCountry = '') {
+  const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
+  if (geoCache.has(key)) return geoCache.get(key);
+
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`, {
+      headers: { 'User-Agent': 'FirelineNasaHarmonizationApp/1.0' }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const addr = data.address || {};
+      const parts = [
+        addr.state_district || addr.county || addr.city || addr.town || addr.village,
+        addr.state,
+        addr.country || fallbackCountry
+      ].filter(Boolean);
+
+      const locName = parts.length > 0 ? parts.join(', ') : (data.display_name?.split(',').slice(0, 3).join(',') || fallbackCountry || 'Regional Area');
+      geoCache.set(key, locName);
+      return locName;
+    }
+  } catch (err) {
+    console.warn('Geocoding notice:', err);
+  }
+  return fallbackCountry || 'Regional Wildfire Zone';
 }
 
-createRoot(document.getElementById('root')).render(<App/>);
+function App() {
+  setWorkerUrl(workerUrl);
+
+  const [theme, setTheme] = useState('dark');
+  const [globalData, setGlobalData] = useState(null);
+  const [selectedCountryCode, setSelectedCountryCode] = useState('India');
+  const [selectedYear, setSelectedYear] = useState('2025');
+  const [selectedMonth, setSelectedMonth] = useState('ALL');
+  const [selectedSensor, setSelectedSensor] = useState('ALL');
+  
+  // Side Drawer & Comparison States
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [pinnedFires, setPinnedFires] = useState([]);
+  const [toastMessage, setToastMessage] = useState('');
+
+  const mapContainer = useRef(null);
+  const mapInstance = useRef(null);
+
+  // Apply Light/Dark Mode attribute to <html> root
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  // Load complete 200-country analytics dataset
+  useEffect(() => {
+    fetch('/global_country_analytics.json')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data) setGlobalData(data);
+      })
+      .catch(err => console.error('Failed to load country data', err));
+  }, []);
+
+  const countryData = globalData?.[selectedCountryCode] || {
+    name: 'India',
+    center: [78.96, 20.59],
+    zoom: 4.4,
+    total_fires: 4493996,
+    years: [2022, 2023, 2024, 2025],
+    annual_totals: { '2022': 1279974, '2023': 1050421, '2024': 993540, '2025': 1170061 },
+    calendar_matrix: [
+      { year: 2022, month: 1, count: 44824 }, { year: 2022, month: 2, count: 74270 }, { year: 2022, month: 3, count: 364722 },
+      { year: 2022, month: 4, count: 311674 }, { year: 2022, month: 5, count: 120250 }, { year: 2022, month: 6, count: 30676 },
+      { year: 2022, month: 7, count: 5608 }, { year: 2022, month: 8, count: 4866 }, { year: 2022, month: 9, count: 8067 },
+      { year: 2022, month: 10, count: 67607 }, { year: 2022, month: 11, count: 160460 }, { year: 2022, month: 12, count: 86950 },
+      { year: 2023, month: 1, count: 72834 }, { year: 2023, month: 2, count: 147181 }, { year: 2023, month: 3, count: 216718 },
+      { year: 2023, month: 4, count: 212141 }, { year: 2023, month: 5, count: 94499 }, { year: 2023, month: 6, count: 33772 },
+      { year: 2023, month: 7, count: 6851 }, { year: 2023, month: 8, count: 7060 }, { year: 2023, month: 9, count: 7042 },
+      { year: 2023, month: 10, count: 55240 }, { year: 2023, month: 11, count: 124047 }, { year: 2023, month: 12, count: 73036 },
+      { year: 2024, month: 1, count: 66574 }, { year: 2024, month: 2, count: 77491 }, { year: 2024, month: 3, count: 171826 },
+      { year: 2024, month: 4, count: 250801 }, { year: 2024, month: 5, count: 140926 }, { year: 2024, month: 6, count: 33079 },
+      { year: 2024, month: 7, count: 4068 }, { year: 2024, month: 8, count: 3720 }, { year: 2024, month: 9, count: 9661 },
+      { year: 2024, month: 10, count: 34233 }, { year: 2024, month: 11, count: 109687 }, { year: 2024, month: 12, count: 91474 },
+      { year: 2025, month: 1, count: 79960 }, { year: 2025, month: 2, count: 120169 }, { year: 2025, month: 3, count: 366665 },
+      { year: 2025, month: 4, count: 217048 }, { year: 2025, month: 5, count: 92671 }, { year: 2025, month: 6, count: 16901 },
+      { year: 2025, month: 7, count: 3995 }, { year: 2025, month: 8, count: 4819 }, { year: 2025, month: 9, count: 8416 },
+      { year: 2025, month: 10, count: 28484 }, { year: 2025, month: 11, count: 110557 }, { year: 2025, month: 12, count: 120376 }
+    ],
+    daynight: { day: 2200000, night: 1014022 },
+    intensity_tiers: { low: 2100000, moderate: 850000, high: 264022 },
+    hotspots: [
+      { date: "2025-03-25", yr: 2025, mo: 3, lat: 23.4615, lon: 92.2956, frp: 2338.5, sensor: "MODIS" },
+      { date: "2025-03-08", yr: 2025, mo: 3, lat: 24.1214, lon: 92.4329, frp: 2056.4, sensor: "MODIS" },
+      { date: "2025-04-02", yr: 2025, mo: 4, lat: 25.4762, lon: 93.4795, frp: 2022.5, sensor: "MODIS" },
+      { date: "2025-03-29", yr: 2025, mo: 3, lat: 25.5373, lon: 92.9988, frp: 1930.3, sensor: "MODIS" },
+      { date: "2025-03-10", yr: 2025, mo: 3, lat: 23.1238, lon: 92.8675, frp: 1909.2, sensor: "MODIS" },
+      { date: "2025-03-05", yr: 2025, mo: 3, lat: 22.9639, lon: 92.824, frp: 1884.8, sensor: "MODIS" },
+      { date: "2025-03-10", yr: 2025, mo: 3, lat: 24.471, lon: 93.2979, frp: 1817.9, sensor: "MODIS" },
+      { date: "2025-03-11", yr: 2025, mo: 3, lat: 23.3507, lon: 93.1554, frp: 1775.1, sensor: "MODIS" },
+      { date: "2025-03-25", yr: 2025, mo: 3, lat: 23.249, lon: 92.3919, frp: 1644.2, sensor: "MODIS" },
+      { date: "2025-03-25", yr: 2025, mo: 3, lat: 23.2507, lon: 92.3961, frp: 1389.4, sensor: "MODIS" },
+      { date: "2025-04-25", yr: 2025, mo: 4, lat: 25.5219, lon: 77.8362, frp: 1281.1, sensor: "MODIS" },
+      { date: "2025-04-02", yr: 2025, mo: 4, lat: 25.4783, lon: 93.4915, frp: 1276.8, sensor: "MODIS" },
+      { date: "2025-03-10", yr: 2025, mo: 3, lat: 24.9891, lon: 93.1605, frp: 1236.4, sensor: "MODIS" },
+      { date: "2025-03-29", yr: 2025, mo: 3, lat: 25.5289, lon: 92.9186, frp: 1200.1, sensor: "MODIS" },
+      { date: "2025-03-14", yr: 2025, mo: 3, lat: 25.2987, lon: 93.6311, frp: 1112.0, sensor: "MODIS" },
+      { date: "2025-03-25", yr: 2025, mo: 3, lat: 24.901, lon: 93.6014, frp: 1105.5, sensor: "MODIS" },
+      { date: "2025-03-08", yr: 2025, mo: 3, lat: 24.1118, lon: 92.4349, frp: 1064.8, sensor: "MODIS" },
+      { date: "2025-03-29", yr: 2025, mo: 3, lat: 25.5415, lon: 92.9911, frp: 1017.9, sensor: "MODIS" },
+      { date: "2025-03-28", yr: 2025, mo: 3, lat: 24.8576, lon: 94.3732, frp: 1014.4, sensor: "MODIS" },
+      { date: "2025-03-08", yr: 2025, mo: 3, lat: 24.0951, lon: 92.5134, frp: 1012.1, sensor: "MODIS" },
+      { date: "2025-03-11", yr: 2025, mo: 3, lat: 23.4071, lon: 93.2368, frp: 993.2, sensor: "MODIS" },
+      { date: "2025-03-13", yr: 2025, mo: 3, lat: 24.2248, lon: 93.3136, frp: 969.0, sensor: "MODIS" },
+      { date: "2025-03-26", yr: 2025, mo: 3, lat: 24.2273, lon: 93.5164, frp: 968.0, sensor: "MODIS" },
+      { date: "2025-03-10", yr: 2025, mo: 3, lat: 22.748, lon: 92.8471, frp: 964.8, sensor: "MODIS" },
+      { date: "2025-03-10", yr: 2025, mo: 3, lat: 24.9924, lon: 93.1762, frp: 952.0, sensor: "MODIS" },
+      { date: "2025-03-15", yr: 2025, mo: 3, lat: 22.3755, lon: 92.8273, frp: 938.9, sensor: "MODIS" },
+      { date: "2025-03-29", yr: 2025, mo: 3, lat: 25.6645, lon: 93.0715, frp: 936.6, sensor: "MODIS" },
+      { date: "2025-03-25", yr: 2025, mo: 3, lat: 24.9045, lon: 93.6082, frp: 899.5, sensor: "MODIS" },
+      { date: "2025-03-17", yr: 2025, mo: 3, lat: 25.4828, lon: 90.8714, frp: 897.4, sensor: "MODIS" },
+      { date: "2025-03-10", yr: 2025, mo: 3, lat: 23.1102, lon: 92.8706, frp: 896.6, sensor: "MODIS" }
+    ]
+  };
+
+  // Filter hotspots for current map view
+  const visibleHotspots = useMemo(() => {
+    if (!countryData.hotspots) return [];
+    return countryData.hotspots.filter(h => {
+      const matchSensor = selectedSensor === 'ALL' || h.sensor === selectedSensor;
+      const matchYear = selectedYear === 'ALL' || Number(h.yr) === Number(selectedYear);
+      const matchMonth = selectedMonth === 'ALL' || Number(h.mo) === Number(selectedMonth);
+      return matchSensor && matchYear && matchMonth;
+    });
+  }, [countryData.hotspots, selectedSensor, selectedYear, selectedMonth]);
+
+  // Max count for heat matrix color scaling
+  const matrixMaxCount = useMemo(() => {
+    if (!countryData.calendar_matrix?.length) return 1;
+    return Math.max(1, ...countryData.calendar_matrix.map(c => c.count));
+  }, [countryData.calendar_matrix]);
+
+  // Derived Year-Wise Data Analytics & Dynamic Inferences (no hardcoding)
+  const analyticsInsights = useMemo(() => {
+    const isAllYears = selectedYear === 'ALL';
+    const currentYearNum = isAllYears ? null : Number(selectedYear);
+
+    // 1. Seasonal Concentration: Dynamic for selected year or multi-year aggregate
+    let monthlyTotals = {};
+    if (isAllYears) {
+      (countryData.calendar_matrix || []).forEach(entry => {
+        const m = Number(entry.month);
+        monthlyTotals[m] = (monthlyTotals[m] || 0) + Number(entry.count);
+      });
+    } else {
+      (countryData.calendar_matrix || [])
+        .filter(entry => Number(entry.year) === currentYearNum)
+        .forEach(entry => {
+          const m = Number(entry.month);
+          monthlyTotals[m] = Number(entry.count);
+        });
+    }
+
+    const sortedMonths = Object.entries(monthlyTotals)
+      .map(([m, cnt]) => ({ month: Number(m), count: cnt }))
+      .sort((a, b) => b.count - a.count);
+
+    const top3Months = sortedMonths.slice(0, 3);
+    const top3Count = top3Months.reduce((sum, item) => sum + item.count, 0);
+    const yearVolume = isAllYears
+      ? (countryData.total_fires || 1)
+      : (countryData.annual_totals?.[selectedYear] || 1);
+    const concentrationPct = Math.round((top3Count / yearVolume) * 100);
+    const top3Names = top3Months.map(item => MONTH_NAMES[item.month - 1]).join(', ');
+
+    // 2. Comparative Trajectory against immediate prior year (or 4-year baseline for 2022)
+    let curVol = 0;
+    let baselineVol = 0;
+    let baselineLabel = '';
+    let yoyPercent = 0;
+    let isEscalating = false;
+
+    if (isAllYears) {
+      curVol = countryData.annual_totals?.['2025'] || 0;
+      baselineVol = countryData.annual_totals?.['2024'] || 0;
+      baselineLabel = 'vs 2024';
+      const diff = curVol - baselineVol;
+      yoyPercent = baselineVol > 0 ? ((diff / baselineVol) * 100).toFixed(1) : 0;
+      isEscalating = diff > 0;
+    } else {
+      curVol = countryData.annual_totals?.[selectedYear] || 0;
+      const prevYearStr = String(currentYearNum - 1);
+      if (countryData.annual_totals?.[prevYearStr]) {
+        baselineVol = countryData.annual_totals[prevYearStr];
+        baselineLabel = `vs ${prevYearStr}`;
+        const diff = curVol - baselineVol;
+        yoyPercent = baselineVol > 0 ? ((diff / baselineVol) * 100).toFixed(1) : 0;
+        isEscalating = diff > 0;
+      } else {
+        // For earliest year (2022), compare against 4-year annual average
+        const annuals = Object.values(countryData.annual_totals || {});
+        baselineVol = annuals.length > 0 ? Math.round(annuals.reduce((a, b) => a + b, 0) / annuals.length) : curVol;
+        baselineLabel = 'vs 4-year mean';
+        const diff = curVol - baselineVol;
+        yoyPercent = baselineVol > 0 ? ((diff / baselineVol) * 100).toFixed(1) : 0;
+        isEscalating = diff > 0;
+      }
+    }
+
+    // 3. Energy Spectrum & Emergency Wildfire Surge (High > 100 MW)
+    let severeCount = 0;
+    let modCount = 0;
+    let lowCount = 0;
+    if (!isAllYears && countryData.annual_intensity_tiers?.[selectedYear]) {
+      const yrTiers = countryData.annual_intensity_tiers[selectedYear];
+      severeCount = yrTiers.high || 0;
+      modCount = yrTiers.moderate || 0;
+      lowCount = yrTiers.low || 0;
+    } else {
+      severeCount = countryData.intensity_tiers?.high || 0;
+      modCount = countryData.intensity_tiers?.moderate || 0;
+      lowCount = countryData.intensity_tiers?.low || 0;
+    }
+    const tierTotal = (lowCount + modCount + severeCount) || 1;
+    const severePct = ((severeCount / tierTotal) * 100).toFixed(1);
+    const modPct = ((modCount / tierTotal) * 100).toFixed(1);
+    const lowPct = ((lowCount / tierTotal) * 100).toFixed(1);
+
+    // 4-year history sparkline data
+    const sparklineData = ['2022', '2023', '2024', '2025'].map(yr => ({
+      year: yr,
+      count: countryData.annual_totals?.[yr] || 0
+    }));
+    const maxSpark = Math.max(1, ...sparklineData.map(s => s.count));
+
+    return {
+      isAllYears,
+      selectedYear,
+      concentrationPct,
+      top3Names,
+      top3Count,
+      yearVolume,
+      curVol,
+      baselineVol,
+      baselineLabel,
+      yoyPercent,
+      isEscalating,
+      severeCount,
+      severePct,
+      modCount,
+      modPct,
+      lowCount,
+      lowPct,
+      sparklineData,
+      maxSpark
+    };
+  }, [countryData, selectedYear]);
+
+  // Color generator for Thermal Heat (YlOrRd)
+  const getCellColor = (count) => {
+    if (!count) return 'var(--cell-bg-empty)';
+    const t = Math.max(0, Math.min(1, count / matrixMaxCount));
+    const q = t * (YLORRD_RAMP.length - 1);
+    const i = Math.min(YLORRD_RAMP.length - 2, Math.floor(q));
+    const f = q - i;
+
+    const c1 = YLORRD_RAMP[i].replace('#', '');
+    const c2 = YLORRD_RAMP[i + 1].replace('#', '');
+    const r1 = parseInt(c1.substring(0, 2), 16), g1 = parseInt(c1.substring(2, 4), 16), b1 = parseInt(c1.substring(4, 6), 16);
+    const r2 = parseInt(c2.substring(0, 2), 16), g2 = parseInt(c2.substring(2, 4), 16), b2 = parseInt(c2.substring(4, 6), 16);
+
+    const r = Math.round(r1 + (r2 - r1) * f);
+    const g = Math.round(g1 + (g2 - g1) * f);
+    const b = Math.round(b1 + (b2 - b1) * f);
+
+    return `rgb(${r}, ${g}, ${b})`;
+  };
+
+  // Function to pin fire, fetch real location name, and open drawer
+  const handlePinFire = async (fireObj) => {
+    setToastMessage(`Locating and adding fire to comparison...`);
+    setIsDrawerOpen(true);
+
+    const locationName = await fetchLocationName(fireObj.lat, fireObj.lon, fireObj.country);
+    const enrichedFire = { ...fireObj, locationName };
+
+    setPinnedFires(prev => {
+      const exists = prev.some(f => Math.abs(f.lat - fireObj.lat) < 0.001 && Math.abs(f.lon - fireObj.lon) < 0.001 && f.date === fireObj.date);
+      if (exists) return prev;
+      return [enrichedFire, ...prev.slice(0, 4)];
+    });
+
+    setToastMessage(`Added fire from ${locationName} to comparison window`);
+    setTimeout(() => setToastMessage(''), 3500);
+  };
+
+  // Keep a stable ref to handlePinFire for popup DOM event listener
+  const handlePinFireRef = useRef(handlePinFire);
+  useEffect(() => {
+    handlePinFireRef.current = handlePinFire;
+  });
+
+  // Current active popup ref to close on selection
+  const activePopupRef = useRef(null);
+
+  // Add fire layer with vivid glowing thermal dots
+  const addFireLayers = (map) => {
+    if (map.getSource('fires')) return;
+
+    map.addSource('fires', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    map.addLayer({
+      id: 'fire-dots',
+      type: 'circle',
+      source: 'fires',
+      paint: {
+        'circle-radius': [
+          'interpolate', ['linear'], ['zoom'],
+          2, 3.5,
+          6, 6.5,
+          10, 13
+        ],
+        'circle-color': [
+          'interpolate', ['linear'], ['get', 'frp'],
+          0, '#fff475',      // Pale Lemon Yellow (low / smoldering fire)
+          25, '#ffd600',     // Bright Golden Yellow (moderate agricultural clearing)
+          75, '#ff8f00',     // Deep Amber Orange (intense brush / woodland burn)
+          200, '#ff3d00',    // Vivid Vermilion Red (severe crown fire)
+          600, '#b71c1c'     // Deep Crimson Red (extreme blowup wildfire)
+        ],
+        'circle-opacity': 0.95,
+        'circle-stroke-width': 1.0,
+        'circle-stroke-color': '#ffffff'
+      }
+    });
+
+    map.on('click', 'fire-dots', (e) => {
+      const p = e.features?.[0]?.properties;
+      if (!p) return;
+
+      const fireObj = {
+        date: p.date,
+        frp: p.frp,
+        lat: Number(p.lat),
+        lon: Number(p.lon),
+        sensor: p.sensor,
+        country: countryData.name
+      };
+
+      if (activePopupRef.current) {
+        activePopupRef.current.remove();
+      }
+
+      // Build popup DOM container with direct click listener
+      const popupNode = document.createElement('div');
+      popupNode.style.fontFamily = 'sans-serif';
+      popupNode.style.color = '#182623';
+      popupNode.style.padding = '4px';
+      popupNode.style.fontSize = '13px';
+      popupNode.innerHTML = `
+        <b style="color: #2a574d; font-size: 14px;">NASA Active Fire Detection</b>
+        <p style="margin: 3px 0 1px;">Date: <b>${p.date}</b></p>
+        <p style="margin: 2px 0;">Fire Heat Output: <b>${p.frp} MW</b></p>
+        <p style="margin: 2px 0; color: #4a5e57; font-size: 11px;">Sensor: ${p.sensor}</p>
+        <button type="button" class="compare-fire-trigger-btn" style="margin-top: 8px; width: 100%; background: #2a574d; color: #fff; border: 0; padding: 7px 10px; border-radius: 3px; font-size: 11px; font-weight: 600; cursor: pointer;">
+          Compare Fire
+        </button>
+      `;
+
+      const compareBtn = popupNode.querySelector('.compare-fire-trigger-btn');
+      if (compareBtn) {
+        compareBtn.addEventListener('click', (evt) => {
+          evt.stopPropagation();
+          evt.preventDefault();
+          if (handlePinFireRef.current) {
+            handlePinFireRef.current(fireObj);
+          }
+          if (activePopupRef.current) {
+            activePopupRef.current.remove();
+          }
+        });
+      }
+
+      const popup = new Popup({ closeButton: true })
+        .setLngLat(e.lngLat)
+        .setDOMContent(popupNode)
+        .addTo(map);
+
+      activePopupRef.current = popup;
+    });
+
+    map.on('mouseenter', 'fire-dots', () => { map.getCanvas().style.cursor = 'pointer'; });
+    map.on('mouseleave', 'fire-dots', () => { map.getCanvas().style.cursor = ''; });
+  };
+
+  // Initialize MapLibre
+  useEffect(() => {
+    if (!mapContainer.current || mapInstance.current) return;
+
+    const styleUrl = theme === 'dark'
+      ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+      : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+
+    const map = new MapLibreMap({
+      container: mapContainer.current,
+      style: styleUrl,
+      center: [78.96, 20.59],
+      zoom: 4.4,
+      minZoom: 1,
+      maxZoom: 15,
+      attributionControl: false
+    });
+
+    map.addControl(new NavigationControl({ showCompass: true }), 'top-right');
+    map.addControl(new AttributionControl({ compact: true }), 'bottom-right');
+
+    map.on('load', () => {
+      addFireLayers(map);
+      if (map.getSource('fires')) {
+        map.getSource('fires').setData({
+          type: 'FeatureCollection',
+          features: visibleHotspots.map(h => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+            properties: { date: h.date, frp: h.frp, sensor: h.sensor, lat: h.lat, lon: h.lon }
+          }))
+        });
+      }
+    });
+
+    mapInstance.current = map;
+
+    return () => {
+      map.remove();
+      mapInstance.current = null;
+    };
+  }, []);
+
+  // Update map style when theme changes
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map) return;
+
+    const styleUrl = theme === 'dark'
+      ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+      : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+
+    map.setStyle(styleUrl);
+    map.once('style.load', () => {
+      addFireLayers(map);
+      if (map.getSource('fires')) {
+        map.getSource('fires').setData({
+          type: 'FeatureCollection',
+          features: visibleHotspots.map(h => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+            properties: { date: h.date, frp: h.frp, sensor: h.sensor, lat: h.lat, lon: h.lon }
+          }))
+        });
+      }
+    });
+  }, [theme]);
+
+  // Update GeoJSON source whenever visibleHotspots changes
+  useEffect(() => {
+    const map = mapInstance.current;
+    if (!map || !map.getSource('fires')) return;
+
+    map.getSource('fires').setData({
+      type: 'FeatureCollection',
+      features: visibleHotspots.map(h => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+        properties: {
+          date: h.date,
+          frp: h.frp,
+          sensor: h.sensor,
+          lat: h.lat,
+          lon: h.lon
+        }
+      }))
+    });
+  }, [visibleHotspots]);
+
+  // Handle Country selection
+  const handleCountrySelect = (code) => {
+    setSelectedCountryCode(code);
+    setSelectedYear('ALL');
+    setSelectedMonth('ALL');
+    const target = globalData?.[code];
+    if (target && mapInstance.current) {
+      mapInstance.current.flyTo({
+        center: target.center,
+        zoom: target.zoom,
+        duration: 900
+      });
+    }
+  };
+
+  // Matrix cell click
+  const handleCellClick = (year, month) => {
+    if (Number(selectedYear) === Number(year) && Number(selectedMonth) === Number(month)) {
+      setSelectedYear('ALL');
+      setSelectedMonth('ALL');
+    } else {
+      setSelectedYear(String(year));
+      setSelectedMonth(Number(month));
+    }
+  };
+
+  // Export CSV
+  const handleExportCSV = () => {
+    if (!visibleHotspots.length) return;
+    const header = ['Date', 'Year', 'Month', 'Latitude', 'Longitude', 'Fire_Radiative_Power_MW', 'Sensor'];
+    const rows = visibleHotspots.map(h => [h.date, h.yr, h.mo, h.lat, h.lon, h.frp, h.sensor]);
+    const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nasa_fireline_${selectedCountryCode}_${selectedYear}_${selectedMonth}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // Top 5 peak burning months - dynamically reactive to selectedYear
+  const topPeakMonths = useMemo(() => {
+    const monthlySums = MONTH_NAMES.map((name, idx) => {
+      const mNum = idx + 1;
+      let count = 0;
+      if (selectedYear === 'ALL') {
+        count = countryData.calendar_matrix
+          ?.filter(c => Number(c.month) === Number(mNum))
+          ?.reduce((sum, c) => sum + Number(c.count), 0) || 0;
+      } else {
+        const entry = countryData.calendar_matrix
+          ?.find(c => Number(c.year) === Number(selectedYear) && Number(c.month) === Number(mNum));
+        count = entry ? Number(entry.count) : 0;
+      }
+      return { name, count, mNum };
+    });
+    return monthlySums.sort((a, b) => b.count - a.count).slice(0, 5);
+  }, [countryData.calendar_matrix, selectedYear]);
+
+  // Filtered fire count matching current user selections (year, month, sensor)
+  const filteredFireCount = useMemo(() => {
+    if (selectedYear === 'ALL' && selectedMonth === 'ALL') {
+      return countryData.total_fires || 0;
+    }
+    if (selectedYear !== 'ALL' && selectedMonth === 'ALL') {
+      return countryData.annual_totals?.[selectedYear] || 0;
+    }
+    if (selectedYear === 'ALL' && selectedMonth !== 'ALL') {
+      return countryData.calendar_matrix
+        ?.filter(c => Number(c.month) === Number(selectedMonth))
+        ?.reduce((sum, c) => sum + Number(c.count), 0) || 0;
+    }
+    // Specific year and specific month
+    const match = countryData.calendar_matrix?.find(
+      c => Number(c.year) === Number(selectedYear) && Number(c.month) === Number(selectedMonth)
+    );
+    return match ? match.count : 0;
+  }, [countryData, selectedYear, selectedMonth]);
+
+  // High-intensity (>100 MW) emergency wildfires - dynamically reactive to selectedYear
+  const severeFireMetrics = useMemo(() => {
+    if (selectedYear !== 'ALL' && countryData.annual_intensity_tiers?.[selectedYear]) {
+      const yrTier = countryData.annual_intensity_tiers[selectedYear];
+      const count = yrTier.high || 0;
+      const yrTotal = countryData.annual_totals?.[selectedYear] || (yrTier.low + yrTier.moderate + count) || 1;
+      const pct = ((count / yrTotal) * 100).toFixed(1);
+      return { count, pct, label: `in ${selectedYear}` };
+    }
+    // All years cumulative
+    const count = countryData.intensity_tiers?.high || 0;
+    const total = countryData.total_fires || 1;
+    const pct = ((count / total) * 100).toFixed(1);
+    return { count, pct, label: 'across 2022-2025' };
+  }, [countryData, selectedYear]);
+
+  // Sorted list of all countries for dropdown
+  const allCountryList = useMemo(() => {
+    if (!globalData) return [];
+    return Object.entries(globalData)
+      .map(([code, item]) => ({ code, name: item.name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [globalData]);
+
+  return (
+    <div className="app-root">
+      {/* Top Navbar */}
+      <header className="app-header">
+        <div className="brand-wrapper">
+          <div className="brand-logo">F</div>
+          <div className="brand-info">
+            <h1>FIRELINE · EARTH OBSERVATION</h1>
+            <p>Harmonized Multi-Year MODIS & VIIRS Wildfire Analytics</p>
+          </div>
+        </div>
+
+        <div className="header-right">
+          {/* Comparison Side Window Trigger Button */}
+          <button
+            className="compare-toggle-header-btn"
+            onClick={() => setIsDrawerOpen(prev => !prev)}
+            title="Open side comparison window"
+          >
+            <span>Compare Fires</span>
+            <span className="compare-count-pill">{pinnedFires.length}</span>
+          </button>
+
+          <button
+            className="theme-toggle-btn"
+            onClick={() => setTheme(prev => prev === 'dark' ? 'light' : 'dark')}
+            title="Toggle Light / Dark mode"
+          >
+            {theme === 'dark' ? 'Light Theme' : 'Dark Theme'}
+          </button>
+        </div>
+      </header>
+
+      <main className="app-container">
+        {/* Universal Country Navigation Bar */}
+        <div className="country-nav-bar">
+          <div className="priority-countries-group">
+            <label>TOP REGIONS:</label>
+            {PRIORITY_COUNTRIES.map(c => (
+              <button
+                key={c.code}
+                className={`c-btn ${selectedCountryCode === c.code ? 'active' : ''}`}
+                onClick={() => handleCountrySelect(c.code)}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+
+          <div className="global-country-dropdown">
+            <label htmlFor="country-select">All 200 Countries:</label>
+            <select
+              id="country-select"
+              className="country-select-dropdown"
+              value={selectedCountryCode}
+              onChange={e => handleCountrySelect(e.target.value)}
+            >
+              {allCountryList.map(c => (
+                <option key={c.code} value={c.code}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* Analytics KPI Row */}
+        <div className="kpi-grid">
+          {/* Box 1: Annual Fire Breakdown */}
+          <div className="kpi-card annual-breakdown-kpi-card">
+            <div className="kpi-header">
+              <span>ANNUAL BURNING TOTALS</span>
+              <span>2022–2025</span>
+            </div>
+            <div className="annual-counts-row">
+              {['2025', '2024', '2023', '2022'].map(yr => {
+                const yrCount = countryData.annual_totals?.[yr] || 0;
+                const isCurrent = selectedYear === yr;
+                return (
+                  <div
+                    key={yr}
+                    className={`annual-count-pill ${isCurrent ? 'selected' : ''}`}
+                    onClick={() => setSelectedYear(selectedYear === yr ? 'ALL' : yr)}
+                    title={`Click to filter by ${yr} (${yrCount.toLocaleString()} fires)`}
+                  >
+                    <span className="pill-year">{yr}</span>
+                    <span className="pill-val">
+                      {yrCount >= 1000000
+                        ? `${(yrCount / 1000000).toFixed(2)}M`
+                        : yrCount >= 1000
+                          ? `${(yrCount / 1000).toFixed(0)}k`
+                          : yrCount.toLocaleString()}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="kpi-note">
+              {selectedYear === 'ALL'
+                ? 'Individual annual fire volumes. Click any year to filter.'
+                : `Filtered to ${selectedYear} (${(countryData.annual_totals?.[selectedYear] || 0).toLocaleString()} fires).`}
+            </div>
+          </div>
+
+          {/* Box 2: Peak Burning Season & Next 4 Highest Months */}
+          <div className="kpi-card peak-season-kpi-card">
+            <div className="kpi-header">
+              <span>PEAK BURNING SEASONS</span>
+              <span>{selectedYear === 'ALL' ? 'HISTORICAL TOP 5' : `${selectedYear} TOP 5`}</span>
+            </div>
+            <div className="kpi-val">
+              {topPeakMonths[0]?.name || 'N/A'}
+            </div>
+            <div className="kpi-rank-list">
+              <span className="rank-tag">Next Highest:</span>
+              {topPeakMonths.slice(1, 5).map((m, idx) => (
+                <span key={m.name} className="rank-month-item" title={`${m.name}: ${m.count.toLocaleString()} fire detections`}>
+                  <b>{idx + 2}.</b> {m.name}
+                </span>
+              ))}
+            </div>
+            <div className="kpi-note">
+              {selectedYear === 'ALL'
+                ? 'Months with highest recurring multi-year fire outbreaks'
+                : `Months with highest fire outbreak volume in ${selectedYear}`}
+            </div>
+          </div>
+
+          {/* Box 3: Dangerous Emergency Wildfires (High Intensity) */}
+          <div className="kpi-card">
+            <div className="kpi-header">
+              <span>EMERGENCY WILDFIRES</span>
+              <span>HEAT &gt; 100 MW</span>
+            </div>
+            <div className="kpi-val" style={{ color: 'var(--fire-flame)' }}>
+              {severeFireMetrics.count.toLocaleString()}
+            </div>
+            <div className="kpi-sub-badge">
+              {severeFireMetrics.pct}% of fires {severeFireMetrics.label}
+            </div>
+            <div className="kpi-note">
+              High-intensity blazes hot enough to burn canopy trees and resist normal suppression
+            </div>
+          </div>
+
+          {/* Box 4: Active Region & Filtered Fire Count */}
+          <div className="kpi-card active-filter-kpi-card">
+            <div className="kpi-header">
+              <span>ACTIVE REGION & FILTER</span>
+              <span className="live-status-dot">ACTIVE</span>
+            </div>
+            
+            <div className="filter-card-main">
+              <div className="filter-country-title">{countryData.name}</div>
+              <div className="filter-stat-primary">
+                <span className="filter-stat-number">{filteredFireCount.toLocaleString()}</span>
+                <span className="filter-stat-label">fires</span>
+              </div>
+            </div>
+
+            <div className="filter-active-pills-row">
+              <span className="active-pill-tag">
+                Year: <b>{selectedYear === 'ALL' ? 'All (2022-25)' : selectedYear}</b>
+              </span>
+              {selectedMonth !== 'ALL' && (
+                <span className="active-pill-tag">
+                  Month: <b>{MONTH_NAMES[Number(selectedMonth) - 1]}</b>
+                </span>
+              )}
+            </div>
+
+            <div className="kpi-note">
+              Coordinates: {countryData.center?.[1]}°N, {countryData.center?.[0]}°E
+            </div>
+          </div>
+        </div>
+
+        {/* Map Explorer Section */}
+        <section className="map-section">
+          <div className="map-top-bar">
+            <div className="map-title">
+              Active Fire Detections across {countryData.name}
+            </div>
+
+            <div className="map-controls-right">
+              {/* Year Filter Dropdown */}
+              <select
+                className="filter-pill-select"
+                value={selectedYear}
+                onChange={e => setSelectedYear(e.target.value)}
+              >
+                <option value="ALL">All Years (2022–2025)</option>
+                <option value="2025">2025 Only</option>
+                <option value="2024">2024 Only</option>
+                <option value="2023">2023 Only</option>
+                <option value="2022">2022 Only</option>
+              </select>
+
+              {/* Month Filter Dropdown */}
+              <select
+                className="filter-pill-select"
+                value={selectedMonth}
+                onChange={e => setSelectedMonth(e.target.value === 'ALL' ? 'ALL' : Number(e.target.value))}
+              >
+                <option value="ALL">All Months</option>
+                {MONTH_NAMES.map((m, i) => (
+                  <option key={m} value={i + 1}>{m}</option>
+                ))}
+              </select>
+
+              {/* Sensor Toggle */}
+              <div className="sensor-toggle-group">
+                {['ALL', 'VIIRS', 'MODIS'].map(s => (
+                  <button
+                    key={s}
+                    className={`sensor-toggle-btn ${selectedSensor === s ? 'active' : ''}`}
+                    onClick={() => setSelectedSensor(s)}
+                  >
+                    {s === 'ALL' ? 'Both' : s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="map-container-box">
+            <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
+          </div>
+
+          <div className="map-bottom-bar">
+            <div>
+              Showing <b>{visibleHotspots.length.toLocaleString()}</b> mapped fire hotspots
+              {selectedYear !== 'ALL' && <span> in <b>{selectedYear}</b></span>}
+              {selectedMonth !== 'ALL' && <span> (<b>{MONTH_NAMES[Number(selectedMonth) - 1]}</b>)</span>}
+            </div>
+            <button className="export-btn" onClick={handleExportCSV}>
+              Download CSV ({visibleHotspots.length.toLocaleString()})
+            </button>
+          </div>
+        </section>
+
+        {/* Multi-Year Burning Activity Calendar Matrix */}
+        <section className="calendar-section">
+          <div className="calendar-top-bar">
+            <div>
+              <h3>Historical Burning Activity Calendar (2022 – 2025)</h3>
+              <p>Direct monthly fire counts using the standard NASA Thermal Heat scale. Click any cell to isolate that month on the map.</p>
+            </div>
+          </div>
+
+          <div className="matrix-wrapper">
+            <table className="matrix-table">
+              <thead>
+                <tr className="matrix-header">
+                  <th>YEAR</th>
+                  {MONTH_NAMES.map(m => (
+                    <th key={m}>{m}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {countryData.years?.map(yr => (
+                  <tr key={yr}>
+                    <td className="year-title-td">{yr}</td>
+                    {MONTH_NAMES.map((_, idx) => {
+                      const mNum = idx + 1;
+                      const record = countryData.calendar_matrix?.find(c => Number(c.year) === Number(yr) && Number(c.month) === Number(mNum));
+                      const count = record ? record.count : 0;
+                      const isSelected = Number(selectedYear) === Number(yr) && Number(selectedMonth) === Number(mNum);
+                      const bgColor = getCellColor(count);
+                      const t = matrixMaxCount > 0 ? (count / matrixMaxCount) : 0;
+                      const textColor = count === 0
+                        ? 'var(--text-dim)'
+                        : (t > 0.55 ? '#ffffff' : '#111b18');
+
+                      return (
+                        <td
+                          key={mNum}
+                          className={`matrix-cell ${isSelected ? 'selected' : ''}`}
+                          style={{
+                            backgroundColor: bgColor,
+                            color: textColor
+                          }}
+                          onClick={() => handleCellClick(yr, mNum)}
+                          title={`${MONTH_NAMES[idx]} ${yr}: ${count.toLocaleString()} fire detections`}
+                        >
+                          <div className="cell-inner">
+                            <span className="cell-cnt">
+                              {count > 1000 ? `${Math.round(count / 1000)}k` : count}
+                            </span>
+                            <span className="cell-lbl">fires</span>
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="matrix-legend-row">
+            <div className="matrix-legend-compact">
+              <span className="legend-label-sub">Few or zero fires</span>
+              <div className="gradient-strip" />
+              <span className="legend-label-sub">Peak month ({matrixMaxCount.toLocaleString()})</span>
+            </div>
+          </div>
+        </section>
+
+        {/* Operational Fire Analytics & Actionable Inferences */}
+        <section className="insights-grid">
+          {/* Card 1: Seasonal Burning Concentration (Dynamic for Selected Year) */}
+          <div className="insight-card">
+            <div className="insight-header">
+              <span className="insight-tag">BURNING PATTERN</span>
+              <span className="insight-metric-pill">
+                {analyticsInsights.concentrationPct}% in 3 Months
+              </span>
+            </div>
+            <h4>Peak Fire Months</h4>
+            <div className="insight-stat-row">
+              <div className="insight-stat-val">{analyticsInsights.top3Names || 'Peak Window'}</div>
+              <div className="insight-stat-desc">
+                {analyticsInsights.isAllYears ? 'Busiest burning months across all years' : `Busiest burning months in ${analyticsInsights.selectedYear}`}
+              </div>
+            </div>
+            <div className="insight-bar-track">
+              <div
+                className="insight-bar-fill"
+                style={{
+                  width: `${Math.min(100, analyticsInsights.concentrationPct)}%`,
+                  background: 'var(--primary-green)'
+                }}
+              />
+            </div>
+            <p>
+              In {countryData.name}{analyticsInsights.isAllYears ? '' : ` in ${analyticsInsights.selectedYear}`}, {analyticsInsights.concentrationPct}% of all fires ({analyticsInsights.top3Count.toLocaleString()} fires) broke out during {analyticsInsights.top3Names}.
+              This shows most fires happen during this short window, helping response teams plan ahead before peak season begins.
+            </p>
+          </div>
+
+          {/* Card 2: Year-over-Year Risk Trajectory & Sparkline (Dynamic Prior Year Baseline) */}
+          <div className="insight-card">
+            <div className="insight-header">
+              <span className="insight-tag">YEAR COMPARISON</span>
+              <span
+                className="insight-metric-pill"
+                style={{
+                  color: analyticsInsights.isEscalating ? '#ff4d4f' : 'var(--primary-green)',
+                  borderColor: analyticsInsights.isEscalating ? 'rgba(255, 77, 79, 0.35)' : 'rgba(42, 87, 77, 0.35)'
+                }}
+              >
+                {analyticsInsights.isEscalating ? `+${analyticsInsights.yoyPercent}% Increase` : `${analyticsInsights.yoyPercent}% Decrease`}
+              </span>
+            </div>
+            <h4>
+              {analyticsInsights.isAllYears ? '2024 to 2025 Fire Change' : `${analyticsInsights.selectedYear} Fire Volume vs Earlier`}
+            </h4>
+            <div className="insight-stat-row">
+              <div className="insight-stat-val">
+                {Number(analyticsInsights.curVol).toLocaleString()}
+                <span style={{ fontSize: '14px', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '6px' }}>
+                  {analyticsInsights.baselineLabel.replace('vs ', 'vs ')} ({Number(analyticsInsights.baselineVol).toLocaleString()})
+                </span>
+              </div>
+              <div className="insight-stat-desc">
+                {analyticsInsights.isEscalating ? 'More fires detected this year' : 'Fewer fires detected this year'}
+              </div>
+            </div>
+
+            {/* 4-Year Sparkline Mini Trend */}
+            <div className="sparkline-trend-container">
+              {analyticsInsights.sparklineData.map(s => {
+                const hPct = Math.max(12, Math.round((s.count / analyticsInsights.maxSpark) * 100));
+                const isHit = analyticsInsights.selectedYear === s.year;
+                return (
+                  <div key={s.year} className={`spark-bar-col ${isHit ? 'active' : ''}`} title={`${s.year}: ${s.count.toLocaleString()} fires`}>
+                    <div className="spark-bar-fill" style={{ height: `${hPct}%` }} />
+                    <span className="spark-bar-lbl">{s.year}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p>
+              In {analyticsInsights.isAllYears ? '2025' : analyticsInsights.selectedYear}, fire activity changed by {analyticsInsights.isEscalating ? `+${analyticsInsights.yoyPercent}%` : `${analyticsInsights.yoyPercent}%`} compared to {analyticsInsights.baselineLabel.replace('vs ', '')}.
+              {analyticsInsights.isEscalating
+                ? ' This means fire activity grew higher this year, so extra field monitoring is recommended.'
+                : ' This means fire activity stayed lower this year, helped by good weather and fire management.'}
+            </p>
+          </div>
+
+          {/* Card 3: Energy Spectrum & Emergency Wildfire Surge (High > 100 MW) */}
+          <div className="insight-card">
+            <div className="insight-header">
+              <span className="insight-tag">FIRE STRENGTH</span>
+              <span className="insight-metric-pill" style={{ color: 'var(--fire-flame)' }}>
+                {analyticsInsights.severePct}% High Intensity
+              </span>
+            </div>
+            <h4>Large Emergency Wildfires</h4>
+            <div className="insight-stat-row">
+              <div className="insight-stat-val" style={{ color: 'var(--fire-flame)' }}>
+                {analyticsInsights.severeCount.toLocaleString()}
+                <span style={{ fontSize: '13px', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '6px' }}>
+                  large fires ({analyticsInsights.isAllYears ? '2022-25' : analyticsInsights.selectedYear})
+                </span>
+              </div>
+              <div className="insight-stat-desc">Fires strong enough to spread across tree tops</div>
+            </div>
+
+            {/* Stacked Energy Spectrum Bar */}
+            <div className="energy-spectrum-bar-wrap">
+              <div className="energy-spectrum-bar">
+                <div
+                  className="energy-seg low"
+                  style={{ width: `${Math.max(4, analyticsInsights.lowPct)}%` }}
+                  title={`Small fires & field burning: ${analyticsInsights.lowCount.toLocaleString()} (${analyticsInsights.lowPct}%)`}
+                />
+                <div
+                  className="energy-seg mod"
+                  style={{ width: `${Math.max(3, analyticsInsights.modPct)}%` }}
+                  title={`Moderate brush fires: ${analyticsInsights.modCount.toLocaleString()} (${analyticsInsights.modPct}%)`}
+                />
+                <div
+                  className="energy-seg high"
+                  style={{ width: `${Math.max(2, analyticsInsights.severePct)}%` }}
+                  title={`Dangerous large wildfires: ${analyticsInsights.severeCount.toLocaleString()} (${analyticsInsights.severePct}%)`}
+                />
+              </div>
+              <div className="energy-legend-row">
+                <span>Small & Crop: <b>{analyticsInsights.lowPct}%</b></span>
+                <span>Medium Brush: <b>{analyticsInsights.modPct}%</b></span>
+                <span style={{ color: 'var(--fire-flame)' }}>Large Wildfires: <b>{analyticsInsights.severePct}%</b></span>
+              </div>
+            </div>
+
+            <p>
+              In {countryData.name}{analyticsInsights.isAllYears ? ' between 2022 and 2025' : ` in ${analyticsInsights.selectedYear}`}, {analyticsInsights.severeCount.toLocaleString()} fires ({analyticsInsights.severePct}%) grew into dangerous high-heat wildfires.
+              Most other fires were routine small agricultural burns or grass clearing that died down quickly.
+            </p>
+          </div>
+        </section>
+      </main>
+
+      {/* Slide-out Side Drawer for Wildfire Comparison */}
+      {isDrawerOpen && (
+        <>
+          <div className="drawer-backdrop" onClick={() => setIsDrawerOpen(false)} />
+          <div className="side-drawer" role="dialog" aria-label="Wildfire Comparison Window">
+            <div className="drawer-header">
+              <h3>
+                <span>Wildfire Comparison</span>
+                <span className="compare-count-pill">{pinnedFires.length}</span>
+              </h3>
+              <button
+                className="drawer-close-btn"
+                onClick={() => setIsDrawerOpen(false)}
+                title="Close side window"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="drawer-body">
+              {pinnedFires.length === 0 ? (
+                <div className="drawer-empty-state">
+                  <b style={{ color: 'var(--text-main)', display: 'block', marginBottom: '6px', fontSize: '15px' }}>
+                    No Fires Pinned Yet
+                  </b>
+                  <p>
+                    Click any fire hotspot on the interactive map and click <b>"Compare Fire"</b>.
+                    Its real geographical location name, heat power (MW), and satellite details will be added here for side-by-side analysis.
+                  </p>
+                </div>
+              ) : (
+                pinnedFires.map((f, i) => {
+                  const tier = f.frp > 100 ? 'extreme' : f.frp > 25 ? 'moderate' : 'low';
+                  const label = f.frp > 100 ? 'Severe Wildfire' : f.frp > 25 ? 'Moderate Burn' : 'Routine / Ag Burn';
+                  return (
+                    <div key={i} className="compare-card-drawer">
+                      <div className="compare-card-top">
+                        <span className={`compare-badge ${tier}`}>{label}</span>
+                        <button
+                          className="remove-pin-btn"
+                          onClick={() => setPinnedFires(prev => prev.filter((_, idx) => idx !== i))}
+                          title="Remove from comparison"
+                        >
+                          Remove
+                        </button>
+                      </div>
+
+                      {/* Real Location Name Resolved by Geocoding */}
+                      <div className="fire-location-title">
+                        {f.locationName || `${f.country || 'Regional Zone'}`}
+                      </div>
+
+                      <div className="compare-metrics">
+                        <span>Acquisition Date: <b>{f.date}</b></span>
+                        <span>Fire Radiative Power: <b>{f.frp} MW</b></span>
+                        <span>Coordinates: <b>{f.lat.toFixed(4)}°N, {f.lon.toFixed(4)}°E</b></span>
+                        <span>Detecting Sensor: <b>{f.sensor}</b></span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {pinnedFires.length > 0 && (
+              <div className="drawer-footer">
+                <button
+                  style={{
+                    fontSize: '11px',
+                    fontFamily: 'var(--font-mono)',
+                    color: '#ef4444',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => setPinnedFires([])}
+                >
+                  Clear All ({pinnedFires.length})
+                </button>
+                <button
+                  className="export-btn"
+                  onClick={() => {
+                    const header = ['Location', 'Date', 'FRP_MW', 'Latitude', 'Longitude', 'Sensor'];
+                    const rows = pinnedFires.map(f => [
+                      `"${f.locationName || f.country}"`,
+                      f.date,
+                      f.frp,
+                      f.lat,
+                      f.lon,
+                      f.sensor
+                    ]);
+                    const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+                    const blob = new Blob([csv], { type: 'text/csv' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `pinned_wildfire_comparison.csv`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                >
+                  Download Comparison CSV
+                </button>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Floating Action Feedback Toast */}
+      {toastMessage && (
+        <div className="toast-notice" role="status">
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      <footer className="app-footer">
+        FIRELINE · 2026 NASA SPACE APPS CHALLENGE • HARMONIZATION OF MODIS AND VIIRS HOT SPOTS<br />
+        <span style={{ fontSize: '10px', marginTop: '4px', display: 'inline-block' }}>
+          Photo credit: The National Commission on Space Activities of Argentina (CONAE) • Data courtesy of NASA FIRMS
+        </span>
+      </footer>
+    </div>
+  );
+}
+
+const root = createRoot(document.getElementById('root'));
+root.render(<App />);
