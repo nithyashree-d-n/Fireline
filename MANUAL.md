@@ -4,15 +4,14 @@
 
 Fireline is a local demonstration of a harmonized MODIS/VIIRS active-fire calendar for the 2026 NASA Space Apps challenge. It standardizes NASA FIRMS hotspot records, deduplicates repeated observations on a shared daily grid, estimates an overlap-period scaling, and serves the resulting activity through a Vite + React + MapLibre interface.
 
-The supplied workspace contains the challenge statement, but `data/` and the rest of `resources/` contain no raw satellite archives or schema notes. The app's visible **DEMO PREVIEW** points are synthetic and must not be cited as observations. The pipeline currently writes valid empty archive tables. Calibration metrics and schema compatibility can only be verified against actual FIRMS files after they are supplied.
+This workspace currently contains no raw satellite CSV archives in `data/`. The app's visible **DEMO PREVIEW** points are synthetic and must not be cited as observations. With no CSVs, the pipeline creates valid empty archive tables. Calibration metrics and schema compatibility should be checked against the supplied bulk files.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  A[Local FIRMS CSV / Parquet] --> B[Python ingestion]
-  K[Optional FIRMS Area API + local map key] -. opt in .-> B
-  B --> C[Schema normalization + confidence filter]
+  A[Global FIRMS bulk CSV files on disk] --> B[DuckDB out-of-core CSV scan]
+  B --> C[SQL schema normalization + confidence filter]
   C --> D[0.05 degree grid + UTC day]
   D --> E[2012-2023 overlap fit]
   E --> F[Cell-day deduplication + HFAI]
@@ -24,7 +23,9 @@ flowchart LR
 
 ## Data ingestion
 
-The pipeline scans `data/` recursively for `.csv` and `.parquet` files. Sensor identity is inferred from the filename and satellite field: MODIS/Terra/Aqua identify MODIS; VIIRS/Suomi-NPP/NOAA-20/NOAA-21 identify VIIRS. Name source files accordingly, for example `MODIS_SP_2012.csv` or `VIIRS_SNPP_SP_2020.parquet`.
+The pipeline scans `data/` recursively for bulk `.csv` files. DuckDB's `read_csv_auto` scans files directly from disk with `union_by_name=true`; normalization, confidence filtering, overlap summaries, and cell-day aggregation are SQL relations in DuckDB. The source archive is never collected into a Python list. DuckDB working memory is capped at 4 GB by default and oversized operations can spill to `output/duckdb_tmp`; override the cap with `--memory-limit` (for example, `--memory-limit 2GB`). The final browser JSON is streamed in batches of 5,000 rows. This supports global bulk archives without source-row-sized Python memory use; reserve adequate disk space for the database, spill files, and exported artifacts.
+
+Sensor identity comes from the filename and satellite field. MODIS/Terra/Aqua identify MODIS. `VIIRS_SNPP`, `VIIRS_NOAA20`, and `VIIRS_NOAA21` all map to `sensor='VIIRS'`, while the separate `satellite` column records `Suomi-NPP`, `NOAA-20`, or `NOAA-21`. Prefer clear names such as `MODIS_SP_2012.csv`, `VIIRS_SNPP_2020.csv`, `VIIRS_NOAA20_2022.csv`, and `VIIRS_NOAA21_2025.csv`. If the archive has no recognizable VIIRS platform in either its name or `satellite` field, provenance falls back to the source value/name and should be reviewed.
 
 Input columns are case-insensitive. The reader recognizes:
 
@@ -40,7 +41,11 @@ Input columns are case-insensitive. The reader recognizes:
 
 MODIS confidence is numeric and normalized as low (<50), nominal (50–79), or high (>=80); low and unknown confidence are filtered. VIIRS confidence is categorical (`l`, `n`, `h`); low is filtered, and unknown categories are retained but labeled unknown. This matches the documented FIRMS conventions but should be checked against each local archive's headers and provenance before operational use.
 
-Optional live FIRMS Area API requests are opt in with `--fetch-source`. The map key comes only from the `FIRMS_MAP_KEY` environment variable or local `.env`; it is not embedded in code or URLs written to output. Use a narrow bounding box and a suitable day range to avoid oversized requests.
+There is no FIRMS Area API request path in this pipeline. Download global bulk archives separately and place the CSVs in `data/`; `FIRMS_MAP_KEY` is not used by ingestion.
+
+### Platform transition
+
+Suomi-NPP VIIRS observations are distinguished from NOAA-20 and NOAA-21 in `satellite`, while all three contribute to the shared VIIRS category used for deduplication and overlap calibration. The VIIRS archive therefore continues across the S-NPP retirement date (Nov 2, 2026) as NOAA-20/21 observations become the active platforms. Calibration is estimated from the actual MODIS/VIIRS overlap rows supplied (2012–2023 by default); no platform continuity or calibration should be assumed for dates missing from the local archive.
 
 ## Harmonization method
 
@@ -105,6 +110,10 @@ python pipeline\harmonize.py
 
 The run writes DuckDB and CSV/Parquet artifacts under `output/` and refreshes `public/app_data.json`. The app automatically uses the real archive when that file has hotspots; with no data it keeps the labeled synthetic preview.
 
+## Optional Global Offers configuration
+
+Copy `.env.example` to `.env` and enter provider credentials only when using those services. `VITE_MAPBOX_ACCESS_TOKEN` is an origin-restricted **public** token used for an optional Mapbox style in the MapLibre renderer. Leave it blank to use the built-in MapLibre background and land outline. Vite exposes `VITE_*` values in browser code, so never put private credentials there. `WEATHER_API_KEY` is reserved for a future server-side weather integration and is not read in this browser-only app. `FIRMS_MAP_KEY` is likewise not used by the bulk CSV pipeline. Restart the Vite dev server after editing `.env`.
+
 Run locally and build:
 
 ```powershell
@@ -116,7 +125,7 @@ Vite prints the local URL, normally `http://localhost:5173/`.
 
 ## Emergency manager user guide
 
-1. **Select an area.** Drag across the map to draw a rectangular AOI, or enter west, south, east, and north longitude/latitude bounds and press **Apply bounds**. The map shows the AOI outline and detections inside it.
+1. **Select an area.** The map opens at global bounds (-180, -90, 180, 90). Drag across the map to draw a rectangular AOI, or enter west, south, east, and north longitude/latitude bounds and press **Apply bounds**. The map shows the AOI outline and detections inside it. Click a hotspot to see its sensor, platform, and date.
 2. **Choose dates.** Set the inclusive start and end date. The calendar and summary respond to the selected time window and AOI.
 3. **Read seasonal patterns.** Each calendar row is a year; columns are months. Cells encode cell-day activity (or HFAI when that metric is selected). Blank cells have no records in the archive for that area/month.
 4. **Compare anomalies.** Turn on **Compare anomaly** to compare each year-month with the same calendar month's median across available years in the selected AOI. Blue indicates below median, pale center indicates near median, and red indicates above median on the RdYlBu legend. The intensity view uses a YlOrRd ramp. Every calendar cell has a text label for assistive technology and a value tooltip.
@@ -127,7 +136,7 @@ Vite prints the local URL, normally `http://localhost:5173/`.
 - `observations`: accepted, normalized source observations.
 - `harmonized_daily`: one strongest observation per unique grid cell and UTC date, plus calibrated activity and repeat-source metadata.
 - `harmonized_hotspots.csv` and `harmonized_hotspots.parquet`: portable deduplicated row-level archive.
-- `app_data.json`: run metadata, overlap calibration metrics, monthly baselines, and map records.
+- `app_data.json`: run metadata, overlap calibration metrics, monthly baselines, and map records, including platform provenance in `satellite`.
 
 ## Limitations and interpretation
 
