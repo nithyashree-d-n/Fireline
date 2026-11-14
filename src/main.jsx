@@ -192,7 +192,7 @@ function App() {
     const concentrationPct = Math.round((top3Count / yearVolume) * 100);
     const top3Names = top3Months.map(item => MONTH_NAMES[item.month - 1]).join(', ');
 
-    // 2. Comparative Trajectory against immediate prior year (or 5-year baseline for earliest year)
+    // 2. Comparative Trajectory against immediate prior year (or multi-year baseline for earliest year)
     let curVol = 0;
     let baselineVol = 0;
     let baselineLabel = '';
@@ -216,10 +216,10 @@ function App() {
         yoyPercent = baselineVol > 0 ? ((diff / baselineVol) * 100).toFixed(1) : 0;
         isEscalating = diff > 0;
       } else {
-        // For earliest year (2021), compare against 5-year annual average
+        // For earliest year (2018), compare against 8-year annual average
         const annuals = Object.values(countryData.annual_totals || {});
         baselineVol = annuals.length > 0 ? Math.round(annuals.reduce((a, b) => a + b, 0) / annuals.length) : curVol;
-        baselineLabel = 'vs 5-year mean';
+        baselineLabel = 'vs 8-year mean';
         const diff = curVol - baselineVol;
         yoyPercent = baselineVol > 0 ? ((diff / baselineVol) * 100).toFixed(1) : 0;
         isEscalating = diff > 0;
@@ -245,8 +245,9 @@ function App() {
     const modPct = ((modCount / tierTotal) * 100).toFixed(1);
     const lowPct = ((lowCount / tierTotal) * 100).toFixed(1);
 
-    // 5-year history sparkline data
-    const sparklineData = ['2021', '2022', '2023', '2024', '2025'].map(yr => ({
+    // 8-year history sparkline data (2018-2025)
+    const availableYears = countryData.years ? countryData.years.map(String) : ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
+    const sparklineData = availableYears.map(yr => ({
       year: yr,
       count: countryData.annual_totals?.[yr] || 0
     }));
@@ -598,7 +599,7 @@ function App() {
     const count = countryData.intensity_tiers?.high || 0;
     const total = countryData.total_fires || 1;
     const pct = ((count / total) * 100).toFixed(1);
-    return { count, pct, label: 'across 2021-2025' };
+    return { count, pct, label: 'across 2018-2025' };
   }, [countryData, selectedYear]);
 
   // Sorted list of all countries for dropdown
@@ -679,10 +680,10 @@ function App() {
           <div className="kpi-card annual-breakdown-kpi-card">
             <div className="kpi-header">
               <span>ANNUAL BURNING TOTALS</span>
-              <span>2021–2025</span>
+              <span>2018–2025</span>
             </div>
             <div className="annual-counts-row">
-              {['2025', '2024', '2023', '2022', '2021'].map(yr => {
+              {['2025', '2024', '2023', '2022', '2021', '2020', '2019', '2018'].map(yr => {
                 const yrCount = countryData.annual_totals?.[yr] || 0;
                 const isCurrent = selectedYear === yr;
                 return (
@@ -769,7 +770,7 @@ function App() {
 
             <div className="filter-active-pills-row">
               <span className="active-pill-tag">
-                Year: <b>{selectedYear === 'ALL' ? 'All (2021-25)' : selectedYear}</b>
+                Year: <b>{selectedYear === 'ALL' ? 'All (2018-25)' : selectedYear}</b>
               </span>
               {selectedMonth !== 'ALL' && (
                 <span className="active-pill-tag">
@@ -798,12 +799,15 @@ function App() {
                 value={selectedYear}
                 onChange={e => setSelectedYear(e.target.value)}
               >
-                <option value="ALL">All Years (2021–2025)</option>
+                <option value="ALL">All Years (2018–2025)</option>
                 <option value="2025">2025 Only</option>
                 <option value="2024">2024 Only</option>
                 <option value="2023">2023 Only</option>
                 <option value="2022">2022 Only</option>
                 <option value="2021">2021 Only</option>
+                <option value="2020">2020 Only</option>
+                <option value="2019">2019 Only</option>
+                <option value="2018">2018 Only</option>
               </select>
 
               {/* Month Filter Dropdown */}
@@ -853,7 +857,7 @@ function App() {
         <section className="calendar-section">
           <div className="calendar-top-bar">
             <div>
-              <h3>Historical Burning Activity Calendar (2021 – 2025)</h3>
+              <h3>Historical Burning Activity Calendar (2018 – 2025)</h3>
               <p>Direct monthly fire counts using the standard NASA Thermal Heat scale. Click any cell to isolate that month on the map.</p>
             </div>
           </div>
@@ -1014,7 +1018,7 @@ function App() {
               <div className="insight-stat-val" style={{ color: 'var(--fire-flame)' }}>
                 {analyticsInsights.severeCount.toLocaleString()}
                 <span style={{ fontSize: '13px', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '6px' }}>
-                  large fires ({analyticsInsights.isAllYears ? '2021-25' : analyticsInsights.selectedYear})
+                  large fires ({analyticsInsights.isAllYears ? '2018-25' : analyticsInsights.selectedYear})
                 </span>
               </div>
               <div className="insight-stat-desc">Fires strong enough to spread across tree tops</div>
@@ -1047,7 +1051,7 @@ function App() {
             </div>
 
             <p>
-              In {countryData.name}{analyticsInsights.isAllYears ? ' between 2021 and 2025' : ` in ${analyticsInsights.selectedYear}`}, {analyticsInsights.severeCount.toLocaleString()} fires ({analyticsInsights.severePct}%) grew into dangerous high-heat wildfires.
+              In {countryData.name}{analyticsInsights.isAllYears ? ' between 2018 and 2025' : ` in ${analyticsInsights.selectedYear}`}, {analyticsInsights.severeCount.toLocaleString()} fires ({analyticsInsights.severePct}%) grew into dangerous high-heat wildfires.
               Most other fires were routine small agricultural burns or grass clearing that died down quickly.
             </p>
           </div>
