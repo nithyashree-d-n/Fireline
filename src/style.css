@@ -103,6 +103,14 @@ button {
   gap: 12px;
 }
 
+.brand-logo-img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+  display: block;
+  flex-shrink: 0;
+}
+
 .brand-logo {
   width: 32px;
   height: 32px;

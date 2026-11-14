@@ -614,7 +614,7 @@ function App() {
       {/* Top Navbar */}
       <header className="app-header">
         <div className="brand-wrapper">
-          <div className="brand-logo">F</div>
+          <img src="/favicon.svg" alt="Fireline Logo" className="brand-logo-img" />
           <div className="brand-info">
             <h1>FIRELINE · EARTH OBSERVATION</h1>
             <p>Harmonized Multi-Year MODIS & VIIRS Wildfire Analytics</p>
