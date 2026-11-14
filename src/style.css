@@ -325,8 +325,8 @@ button {
 /* Annual Breakdown Row in Hero KPI */
 .annual-counts-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(46px, 1fr));
+  gap: 5px;
   margin: 6px 0 2px;
 }
 

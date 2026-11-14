@@ -34,7 +34,7 @@ These rules are binding on all agents working on this workspace and must be upda
 ---
 
 ## 4. Data Integrity & Repository Cleanliness
-- **Multi-Year Harmonized Data Scope**: Support years 2022, 2023, 2024, and 2025 across all 200+ countries with calendar matrices and sampled fire dots.
+- **Multi-Year Harmonized Data Scope**: Support complete 5-year coverage (2021, 2022, 2023, 2024, and 2025) across all 200+ countries with calendar matrices, annual intensity tiers, and sampled fire dots.
 - **Fast JSON Engine**: Use pre-aggregated, indexed JSON datasets (`global_country_analytics.json`) for instant map and metric filtering without raw CSV runtime parsing latency.
 - **GitHub Push Rules**: Never commit or push raw multi-gigabyte CSV datasets (`Dataset/`, `data/`). Only push source code, configuration, scripts, and pre-aggregated analytics JSON files (`public/data/global_country_analytics.json`).
 
