@@ -1,0 +1,26 @@
+{
+  "name": "harmonization_nasa",
+  "version": "1.0.0",
+  "description": "MODIS and VIIRS harmonized burning activity calendar",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "pipeline": "python pipeline/harmonize.py"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.65.1"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "^6.3.0",
+    "echarts": "^6.1.0",
+    "maplibre-gl": "^6.18.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "vite": "^8.3.8"
+  }
+}

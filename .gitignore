@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.venv/
+.env
+output/
+.playwright-mcp/
+__pycache__/

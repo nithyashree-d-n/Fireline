@@ -1,0 +1,1 @@
+{"generated_at":"2026-11-14T12:34:38+05:30","input_files":0,"observations":0,"rejected_rows":0,"unknown_sensor_files":[],"overlap":{"start":"2012-01-01","end":"2023-12-31","cell_days":{"MODIS":0,"VIIRS":0},"scaling":{"MODIS":1.0,"VIIRS":1.0}},"grid":"approximate equal-area 0.05 degree","months":[],"hotspots":[]}
