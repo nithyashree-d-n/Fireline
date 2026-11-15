@@ -1613,6 +1613,16 @@ function App() {
       }
     };
 
+    // Helper to verify captured canvas image is a genuine rendered image rather than empty transparent buffer
+    const isValidCapturedImage = (dataUrl) => {
+      if (!dataUrl || typeof dataUrl !== 'string') return false;
+      if (!dataUrl.startsWith('data:image/png') && !dataUrl.startsWith('data:image/jpeg')) return false;
+      // An empty/transparent 1080p WebGL canvas generates a tiny base64 payload under 12KB with continuous zero-byte padding ('AAAA')
+      if (dataUrl.length < 15000) return false;
+      if (dataUrl.includes('AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')) return false;
+      return true;
+    };
+
     // Capture main map snapshot
     const captureMainMap = (callback) => {
       const fallbackSvg = generateVectorMapSVG(visibleHotspots, countryData.center, 400, 215, countryData.name);
@@ -1627,7 +1637,7 @@ function App() {
         executed = true;
         try {
           const imgUrl = map.getCanvas().toDataURL('image/png');
-          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 500) {
+          if (isValidCapturedImage(imgUrl)) {
             callback(imgUrl);
           } else {
             callback(fallbackSvg);
@@ -1640,13 +1650,13 @@ function App() {
       try {
         map.once('render', deliverMain);
         map.triggerRepaint();
-        setTimeout(deliverMain, 100);
+        setTimeout(deliverMain, 120);
       } catch {
         deliverMain();
       }
     };
 
-    // Capture regional map snapshot - using identical render-synchronized capture engine as main map
+    // Capture regional map snapshot
     const captureRegMap = (callback) => {
       if (!isRegionalReport) {
         callback('');
@@ -1657,8 +1667,7 @@ function App() {
       const regCenter = currentStateObj ? [currentStateObj.lon, currentStateObj.lat] : countryData.center;
       const fallbackSvg = generateVectorMapSVG(regionalVisibleHotspots, regCenter, 400, 215, regSubtitle);
 
-      // Check if regional map instance is available, fallback to mapInstance if not separate
-      const regMap = regionalMapInstance.current || mapInstance.current;
+      const regMap = regionalMapInstance.current;
       if (!regMap) {
         callback(fallbackSvg);
         return;
@@ -1671,9 +1680,18 @@ function App() {
         try {
           const regCanvas = regMap.getCanvas();
           const imgUrl = regCanvas ? regCanvas.toDataURL('image/png') : '';
-          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 500) {
+          if (isValidCapturedImage(imgUrl)) {
             callback(imgUrl);
           } else {
+            // If regional canvas buffer is transparent or off-screen, check if main map canvas has valid frame
+            if (mapInstance.current) {
+              const mainCanvas = mapInstance.current.getCanvas();
+              const mainUrl = mainCanvas ? mainCanvas.toDataURL('image/png') : '';
+              if (isValidCapturedImage(mainUrl)) {
+                callback(mainUrl);
+                return;
+              }
+            }
             callback(fallbackSvg);
           }
         } catch {
@@ -1684,7 +1702,7 @@ function App() {
       try {
         regMap.once('render', deliverReg);
         regMap.triggerRepaint();
-        setTimeout(deliverReg, 100);
+        setTimeout(deliverReg, 120);
       } catch {
         deliverReg();
       }
