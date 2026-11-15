@@ -998,7 +998,7 @@ function App() {
       printWin = null;
     }
 
-    const buildReport = (capturedMapUrl, capturedRegMapUrl) => {
+    const buildReport = (capturedMapUrl) => {
       const regionNameDisplay = isRegionalReport && currentStateObj
         ? `${currentStateObj.name}, ${countryData.name}`
         : countryData.name;
@@ -1155,52 +1155,29 @@ function App() {
           </div>
         </div>
 
-        <div class="main-grid">
-          <div>
-            <div class="map-card">
-              <div class="map-header">
-                <span>REGIONAL SATELLITE MAP SNAPSHOT</span>
-                <span>${currentStateObj ? currentStateObj.name : countryData.name}</span>
-              </div>
-              <div class="map-frame">
-                ${capturedRegMapUrl && capturedRegMapUrl.startsWith('data:image') && capturedRegMapUrl.length > 500
-                  ? `<img src="${capturedRegMapUrl}" alt="Regional Satellite Fire Map" style="width:100%;height:100%;object-fit:cover;display:block;" />`
-                  : (capturedRegMapUrl && capturedRegMapUrl.startsWith('<svg')
-                    ? capturedRegMapUrl
-                    : generateVectorMapSVG(regionalVisibleHotspots, currentStateObj ? [currentStateObj.lon, currentStateObj.lat] : countryData.center, 400, 215, currentStateObj ? currentStateObj.name : countryData.name)
-                  )
-                }
-              </div>
-              <div class="map-footer">
-                Synchronized regional satellite capture focused directly on ${currentStateObj ? currentStateObj.name : countryData.name}.
-              </div>
-            </div>
+        <div style="margin-bottom: 12px;">
+          <div class="data-card">
+            <h3>Hottest Regional Wildfires</h3>
+            <table>
+              <thead>
+                <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;text-align:left;">
+                  <th style="padding:4px 8px;">DATE</th>
+                  <th style="padding:4px 8px;">COORDINATES</th>
+                  <th style="padding:4px 8px;text-align:right;">HEAT OUTPUT</th>
+                  <th style="padding:4px 8px;text-align:center;">SENSOR</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${regionalSevereHotspots || '<tr><td colspan="4" style="padding:8px;text-align:center;color:#94a3b8;">No hotspots matching active regional filter</td></tr>'}
+              </tbody>
+            </table>
           </div>
 
-          <div>
-            <div class="data-card">
-              <h3>Hottest Regional Wildfires</h3>
-              <table>
-                <thead>
-                  <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;text-align:left;">
-                    <th style="padding:4px 8px;">DATE</th>
-                    <th style="padding:4px 8px;">COORDINATES</th>
-                    <th style="padding:4px 8px;text-align:right;">HEAT OUTPUT</th>
-                    <th style="padding:4px 8px;text-align:center;">SENSOR</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${regionalSevereHotspots || '<tr><td colspan="4" style="padding:8px;text-align:center;color:#94a3b8;">No hotspots matching active regional filter</td></tr>'}
-                </tbody>
-              </table>
-            </div>
-
-            <div class="action-briefing" style="margin-top:10px;">
-              <h4>Regional Operational Guidance</h4>
-              <p>
-                In ${currentStateObj ? currentStateObj.name : countryData.name} during ${regTimeframeLabel}, ${regionalVisibleHotspots.length.toLocaleString()} fire hotspots were mapped, including ${regionalVisibleHotspots.filter(h => h.frp > 100).length.toLocaleString()} emergency blazes exceeding 100 MW. Local forestry crews should position rapid-containment equipment and fire patrol teams in high-density corridors.
-              </p>
-            </div>
+          <div class="action-briefing" style="margin-top:10px;">
+            <h4>Regional Operational Guidance</h4>
+            <p>
+              In ${currentStateObj ? currentStateObj.name : countryData.name} during ${regTimeframeLabel}, ${regionalVisibleHotspots.length.toLocaleString()} fire hotspots were mapped, including ${regionalVisibleHotspots.filter(h => h.frp > 100).length.toLocaleString()} emergency blazes exceeding 100 MW. Local forestry crews should position rapid-containment equipment and fire patrol teams in high-density corridors.
+            </p>
           </div>
         </div>
 
@@ -1656,62 +1633,8 @@ function App() {
       }
     };
 
-    // Capture regional map snapshot
-    const captureRegMap = (callback) => {
-      if (!isRegionalReport) {
-        callback('');
-        return;
-      }
-
-      const regSubtitle = currentStateObj ? currentStateObj.name : countryData.name;
-      const regCenter = currentStateObj ? [currentStateObj.lon, currentStateObj.lat] : countryData.center;
-      const fallbackSvg = generateVectorMapSVG(regionalVisibleHotspots, regCenter, 400, 215, regSubtitle);
-
-      const regMap = regionalMapInstance.current;
-      if (!regMap) {
-        callback(fallbackSvg);
-        return;
-      }
-
-      let executed = false;
-      const deliverReg = () => {
-        if (executed) return;
-        executed = true;
-        try {
-          const regCanvas = regMap.getCanvas();
-          const imgUrl = regCanvas ? regCanvas.toDataURL('image/png') : '';
-          if (isValidCapturedImage(imgUrl)) {
-            callback(imgUrl);
-          } else {
-            // If regional canvas buffer is transparent or off-screen, check if main map canvas has valid frame
-            if (mapInstance.current) {
-              const mainCanvas = mapInstance.current.getCanvas();
-              const mainUrl = mainCanvas ? mainCanvas.toDataURL('image/png') : '';
-              if (isValidCapturedImage(mainUrl)) {
-                callback(mainUrl);
-                return;
-              }
-            }
-            callback(fallbackSvg);
-          }
-        } catch {
-          callback(fallbackSvg);
-        }
-      };
-
-      try {
-        regMap.once('render', deliverReg);
-        regMap.triggerRepaint();
-        setTimeout(deliverReg, 120);
-      } catch {
-        deliverReg();
-      }
-    };
-
     captureMainMap((mainImg) => {
-      captureRegMap((regImg) => {
-        buildReport(mainImg, regImg);
-      });
+      buildReport(mainImg);
     });
   };
 
