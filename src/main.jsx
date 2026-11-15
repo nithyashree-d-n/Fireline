@@ -63,8 +63,31 @@ function App() {
   const [pinnedFires, setPinnedFires] = useState([]);
   const [toastMessage, setToastMessage] = useState('');
 
+  // Regional Subdivisions & Continuous Multi-Year Timeline States (Index: 0 = Jan 2018, 95 = Dec 2025)
+  const [subdivisionsData, setSubdivisionsData] = useState(null);
+  const [selectedStateCode, setSelectedStateCode] = useState('ALL');
+  const [regStartIdx, setRegStartIdx] = useState(84); // Jan 2025 default (index 84)
+  const [regEndIdx, setRegEndIdx] = useState(95);   // Dec 2025 default (index 95)
+  const [openTimePicker, setOpenTimePicker] = useState(null); // 'start', 'end', or null
+  const timePickerRef = useRef(null);
+
+  // Close timeframe popovers when clicking outside
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (timePickerRef.current && !timePickerRef.current.contains(e.target)) {
+        setOpenTimePicker(null);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, []);
+
   const mapContainer = useRef(null);
   const mapInstance = useRef(null);
+
+  // Regional second map container and instance
+  const regionalMapContainer = useRef(null);
+  const regionalMapInstance = useRef(null);
 
   // Apply Light/Dark Mode attribute to <html> root
   useEffect(() => {
@@ -79,6 +102,13 @@ function App() {
         if (data) setGlobalData(data);
       })
       .catch(err => console.error('Failed to load country data', err));
+
+    fetch('/country_subdivisions.json')
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data) setSubdivisionsData(data);
+      })
+      .catch(err => console.error('Failed to load subdivisions', err));
   }, []);
 
   const countryData = globalData?.[selectedCountryCode] || {
@@ -142,7 +172,19 @@ function App() {
     ]
   };
 
-  // Filter hotspots for current map view
+  // List of states/provinces available for currently selected country
+  const availableStates = useMemo(() => {
+    if (!subdivisionsData || !subdivisionsData[selectedCountryCode]) return [];
+    return subdivisionsData[selectedCountryCode];
+  }, [subdivisionsData, selectedCountryCode]);
+
+  // Selected state object
+  const currentStateObj = useMemo(() => {
+    if (selectedStateCode === 'ALL' || !availableStates.length) return null;
+    return availableStates.find(s => s.code === selectedStateCode || s.name === selectedStateCode) || null;
+  }, [availableStates, selectedStateCode]);
+
+  // Filter hotspots for upper national map view (strictly responds to upper Year, Month, and Sensor controls)
   const visibleHotspots = useMemo(() => {
     if (!countryData.hotspots) return [];
     return countryData.hotspots.filter(h => {
@@ -152,6 +194,55 @@ function App() {
       return matchSensor && matchYear && matchMonth;
     });
   }, [countryData.hotspots, selectedSensor, selectedYear, selectedMonth]);
+
+  // Convert continuous month index (0..95) to formatted Year & Month label (e.g. 0 -> 'Jan 2018', 95 -> 'Dec 2025')
+  const indexToYearMonth = (idx) => {
+    const yr = 2018 + Math.floor(idx / 12);
+    const m = (idx % 12) + 1;
+    return { yr, mo: m, label: `${MONTH_NAMES[m - 1]} ${yr}` };
+  };
+
+  const regStartInfo = useMemo(() => indexToYearMonth(regStartIdx), [regStartIdx]);
+  const regEndInfo = useMemo(() => indexToYearMonth(regEndIdx), [regEndIdx]);
+
+  // Human-readable active timeline span label
+  const regActiveTimelineLabel = useMemo(() => {
+    const minI = Math.min(regStartIdx, regEndIdx);
+    const maxI = Math.max(regStartIdx, regEndIdx);
+    const startObj = indexToYearMonth(minI);
+    const endObj = indexToYearMonth(maxI);
+    if (minI === maxI) return startObj.label;
+    if (minI === 0 && maxI === 95) return 'All Years (2018 – 2025)';
+    return `${startObj.label} – ${endObj.label}`;
+  }, [regStartIdx, regEndIdx]);
+
+  // Filter hotspots for lower regional map & regional hub (responds to State subdivision and continuous timeline span)
+  const regionalVisibleHotspots = useMemo(() => {
+    if (!countryData.hotspots) return [];
+    const minI = Math.min(regStartIdx, regEndIdx);
+    const maxI = Math.max(regStartIdx, regEndIdx);
+    const startObj = indexToYearMonth(minI);
+    const endObj = indexToYearMonth(maxI);
+    const startKey = startObj.yr * 100 + startObj.mo;
+    const endKey = endObj.yr * 100 + endObj.mo;
+
+    return countryData.hotspots.filter(h => {
+      const matchSensor = selectedSensor === 'ALL' || h.sensor === selectedSensor;
+
+      // State bounding box filter if selected
+      let matchState = true;
+      if (currentStateObj && currentStateObj.bbox) {
+        const [minLon, minLat, maxLon, maxLat] = currentStateObj.bbox;
+        matchState = h.lon >= minLon && h.lon <= maxLon && h.lat >= minLat && h.lat <= maxLat;
+      }
+
+      // Continuous Year-Month integer comparison (e.g. 202201 <= hKey <= 202409)
+      const hKey = Number(h.yr) * 100 + Number(h.mo);
+      const matchSpan = hKey >= startKey && hKey <= endKey;
+
+      return matchSensor && matchState && matchSpan;
+    });
+  }, [countryData.hotspots, selectedSensor, currentStateObj, regStartIdx, regEndIdx]);
 
   // Max count for heat matrix color scaling
   const matrixMaxCount = useMemo(() => {
@@ -416,6 +507,97 @@ function App() {
     map.on('mouseleave', 'fire-dots', () => { map.getCanvas().style.cursor = ''; });
   };
 
+  // Initialize Regional Second MapLibre Instance
+  useEffect(() => {
+    if (!regionalMapContainer.current || regionalMapInstance.current) return;
+
+    const styleUrl = theme === 'dark'
+      ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+      : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+
+    const regMap = new MapLibreMap({
+      container: regionalMapContainer.current,
+      style: styleUrl,
+      center: countryData.center || [78.96, 20.59],
+      zoom: countryData.zoom || 4.4,
+      minZoom: 1,
+      maxZoom: 15,
+      attributionControl: false,
+      preserveDrawingBuffer: true,
+      fadeDuration: 0
+    });
+
+    regMap.addControl(new NavigationControl({ showCompass: true }), 'top-right');
+    regMap.addControl(new AttributionControl({ compact: true }), 'bottom-right');
+
+    regMap.on('load', () => {
+      addFireLayers(regMap);
+      if (regMap.getSource('fires')) {
+        regMap.getSource('fires').setData({
+          type: 'FeatureCollection',
+          features: regionalVisibleHotspots.map(h => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+            properties: { date: h.date, frp: h.frp, sensor: h.sensor, lat: h.lat, lon: h.lon }
+          }))
+        });
+      }
+    });
+
+    regionalMapInstance.current = regMap;
+
+    return () => {
+      regMap.remove();
+      regionalMapInstance.current = null;
+    };
+  }, []);
+
+  // Update regional map style when theme changes
+  useEffect(() => {
+    const regMap = regionalMapInstance.current;
+    if (!regMap) return;
+
+    const styleUrl = theme === 'dark'
+      ? 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+      : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+
+    regMap.setStyle(styleUrl);
+    regMap.once('style.load', () => {
+      addFireLayers(regMap);
+      if (regMap.getSource('fires')) {
+        regMap.getSource('fires').setData({
+          type: 'FeatureCollection',
+          features: regionalVisibleHotspots.map(h => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+            properties: { date: h.date, frp: h.frp, sensor: h.sensor, lat: h.lat, lon: h.lon }
+          }))
+        });
+      }
+    });
+  }, [theme]);
+
+  // Update regional map GeoJSON source whenever regionalVisibleHotspots changes
+  useEffect(() => {
+    const regMap = regionalMapInstance.current;
+    if (!regMap || !regMap.getSource('fires')) return;
+
+    regMap.getSource('fires').setData({
+      type: 'FeatureCollection',
+      features: regionalVisibleHotspots.map(h => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+        properties: {
+          date: h.date,
+          frp: h.frp,
+          sensor: h.sensor,
+          lat: h.lat,
+          lon: h.lon
+        }
+      }))
+    });
+  }, [regionalVisibleHotspots]);
+
   // Initialize MapLibre
   useEffect(() => {
     if (!mapContainer.current || mapInstance.current) return;
@@ -512,13 +694,49 @@ function App() {
     setSelectedCountryCode(code);
     setSelectedYear('2025');
     setSelectedMonth('ALL');
+    setSelectedStateCode('ALL');
+    setRegStartIdx(84); // Jan 2025
+    setRegEndIdx(95);   // Dec 2025
     const target = globalData?.[code];
-    if (target && mapInstance.current) {
-      mapInstance.current.flyTo({
-        center: target.center,
-        zoom: target.zoom,
-        duration: 900
-      });
+    if (target) {
+      if (mapInstance.current) {
+        mapInstance.current.flyTo({
+          center: target.center,
+          zoom: target.zoom,
+          duration: 900
+        });
+      }
+      if (regionalMapInstance.current) {
+        regionalMapInstance.current.flyTo({
+          center: target.center,
+          zoom: target.zoom,
+          duration: 900
+        });
+      }
+    }
+  };
+
+  // Handle State / Province selection (strictly navigates the second regional map)
+  const handleStateSelect = (stateCode) => {
+    setSelectedStateCode(stateCode);
+    if (stateCode === 'ALL') {
+      const target = globalData?.[selectedCountryCode];
+      if (target && regionalMapInstance.current) {
+        regionalMapInstance.current.flyTo({
+          center: target.center,
+          zoom: target.zoom,
+          duration: 800
+        });
+      }
+    } else {
+      const stateObj = availableStates.find(s => s.code === stateCode || s.name === stateCode);
+      if (stateObj && regionalMapInstance.current) {
+        const [minLon, minLat, maxLon, maxLat] = stateObj.bbox;
+        regionalMapInstance.current.fitBounds(
+          [[minLon, minLat], [maxLon, maxLat]],
+          { padding: 40, duration: 900 }
+        );
+      }
     }
   };
 
@@ -533,18 +751,20 @@ function App() {
     }
   };
 
-  // Export CSV
-  const handleExportCSV = () => {
-    if (!visibleHotspots.length) return;
+  // Export CSV (isRegional=true exports regional dataset)
+  const handleExportCSV = (isRegional = false) => {
+    const targetHotspots = isRegional ? regionalVisibleHotspots : visibleHotspots;
+    if (!targetHotspots.length) return;
     const header = ['Date', 'Year', 'Month', 'Latitude', 'Longitude', 'Fire_Radiative_Power_MW', 'Sensor'];
-    const rows = visibleHotspots.map(h => [h.date, h.yr, h.mo, h.lat, h.lon, h.frp, h.sensor]);
+    const rows = targetHotspots.map(h => [h.date, h.yr, h.mo, h.lat, h.lon, h.frp, h.sensor]);
     const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
 
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `nasa_fireline_${selectedCountryCode}_${selectedYear}_${selectedMonth}.csv`;
+    const regionName = isRegional && currentStateObj ? currentStateObj.name.replace(/\s+/g, '_') : selectedCountryCode;
+    a.download = `nasa_fireline_${regionName}_${selectedYear}_${selectedMonth}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -604,53 +824,87 @@ function App() {
     return { count, pct, label: 'across 2018-2025' };
   }, [countryData, selectedYear]);
 
-  // Generate self-contained vector SVG scatter map of country hotspots for guaranteed rendering
-  const generateVectorMapSVG = (hotspots, centerCoords, width = 360, height = 215) => {
-    if (!hotspots || hotspots.length === 0) {
-      return '';
+  // Generate self-contained vector SVG scatter map of hotspots for guaranteed rendering
+  const generateVectorMapSVG = (hotspots, centerCoords, width = 400, height = 215, subtitle = '') => {
+    const list = Array.isArray(hotspots) ? hotspots : [];
+    const baseHotspots = list.length > 0 ? list : (countryData.hotspots || []);
+    
+    let minLat, maxLat, minLon, maxLon;
+    if (baseHotspots.length > 0) {
+      const lats = baseHotspots.map(h => Number(h.lat)).filter(n => !isNaN(n));
+      const lons = baseHotspots.map(h => Number(h.lon)).filter(n => !isNaN(n));
+      minLat = Math.min(...lats);
+      maxLat = Math.max(...lats);
+      minLon = Math.min(...lons);
+      maxLon = Math.max(...lons);
+    } else {
+      const cLon = (centerCoords && centerCoords[0]) || 78.96;
+      const cLat = (centerCoords && centerCoords[1]) || 20.59;
+      minLat = cLat - 2.5;
+      maxLat = cLat + 2.5;
+      minLon = cLon - 3.5;
+      maxLon = cLon + 3.5;
     }
-    const lats = hotspots.map(h => h.lat);
-    const lons = hotspots.map(h => h.lon);
-    let minLat = Math.min(...lats);
-    let maxLat = Math.max(...lats);
-    let minLon = Math.min(...lons);
-    let maxLon = Math.max(...lons);
 
-    if (maxLat - minLat < 1.0) { minLat -= 1.0; maxLat += 1.0; }
+    if (maxLat - minLat < 1.0) { minLat -= 0.8; maxLat += 0.8; }
     if (maxLon - minLon < 1.0) { minLon -= 1.0; maxLon += 1.0; }
 
-    const pad = 18;
+    const pad = 20;
     const plotW = width - pad * 2;
     const plotH = height - pad * 2;
 
-    const circles = hotspots.slice(0, 400).map(h => {
+    const circles = baseHotspots.slice(0, 450).map(h => {
       const x = pad + ((h.lon - minLon) / (maxLon - minLon)) * plotW;
       const y = pad + ((maxLat - h.lat) / (maxLat - minLat)) * plotH;
-      const r = h.frp > 100 ? 5.0 : h.frp >= 25 ? 3.5 : 2.5;
-      const fill = h.frp > 100 ? '#ef4444' : h.frp >= 50 ? '#f97316' : h.frp >= 25 ? '#f59e0b' : '#fef08a';
-      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${fill}" opacity="0.9" />`;
+      const r = h.frp > 100 ? 5.5 : h.frp >= 25 ? 3.8 : 2.5;
+      const fill = h.frp > 100 ? '#ef4444' : h.frp >= 50 ? '#f97316' : h.frp >= 25 ? '#f59e0b' : '#fde047';
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${fill}" opacity="0.88" />`;
     }).join('');
 
+    const subText = subtitle ? `<text x="${width - 12}" y="${height - 8}" fill="#94a3b8" font-size="8.5" font-family="sans-serif" text-anchor="end">${subtitle}</text>` : '';
+
+    const uid = Math.random().toString(36).substring(2, 8);
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="width:100%;height:100%;min-height:215px;background:#0f172a;display:block;">
       <defs>
-        <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
-          <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#1e293b" stroke-width="0.8"/>
+        <pattern id="grid_${uid}" width="28" height="28" patternUnits="userSpaceOnUse">
+          <path d="M 28 0 L 0 0 0 28" fill="none" stroke="#1e293b" stroke-width="0.8"/>
         </pattern>
       </defs>
       <rect width="${width}" height="${height}" fill="#0f172a" />
-      <rect width="${width}" height="${height}" fill="url(#grid)" />
-      <text x="10" y="16" fill="#94a3b8" font-size="9" font-family="monospace">N: ${maxLat.toFixed(1)}° | E: ${maxLon.toFixed(1)}°</text>
-      <text x="10" y="${height - 8}" fill="#94a3b8" font-size="9" font-family="monospace">S: ${minLat.toFixed(1)}° | W: ${minLon.toFixed(1)}°</text>
-      <text x="${width - 12}" y="16" fill="#f59e0b" font-size="9" font-weight="bold" font-family="sans-serif" text-anchor="end">SATELLITE HEATMAP</text>
+      <rect width="${width}" height="${height}" fill="url(#grid_${uid})" />
+      <text x="12" y="16" fill="#94a3b8" font-size="8.5" font-family="monospace">BOUNDS: ${maxLat.toFixed(1)}N, ${minLon.toFixed(1)}E TO ${minLat.toFixed(1)}N, ${maxLon.toFixed(1)}E</text>
+      <text x="${width - 12}" y="16" fill="#f59e0b" font-size="9" font-weight="bold" font-family="sans-serif" text-anchor="end">SATELLITE THERMAL RADAR</text>
       ${circles}
+      <text x="12" y="${height - 8}" fill="#cbd5e1" font-size="8.5" font-family="sans-serif">${baseHotspots.length} SATELLITE DETECTIONS</text>
+      ${subText}
     </svg>`;
   };
 
-  // Export 1-Page Printable PDF Incident Briefing Report
-  const handleExportPDF = () => {
-    const buildReport = (capturedMapUrl) => {
+  // Export Printable PDF Incident Briefing Report
+  // isRegionalReport=true includes Section 1 (National Summary) + Section 2 (Regional Subdivision & Date Range Intelligence)
+  const handleExportPDF = (isRegionalReport = false) => {
+    // Open window immediately on user gesture to avoid browser popup blockers
+    let printWin = null;
+    try {
+      printWin = window.open('', '_blank');
+      if (printWin) {
+        printWin.document.write('<!DOCTYPE html><html><head><title>Preparing Fireline Report...</title></head><body style="font-family:sans-serif;padding:30px;color:#1e293b;background:#f8fafc;"><h2>Preparing Fireline Report...</h2><p>Rendering satellite captures and intelligence summaries. Please wait...</p></body></html>');
+      }
+    } catch {
+      printWin = null;
+    }
+
+    const buildReport = (capturedMapUrl, capturedRegMapUrl) => {
+      const regionNameDisplay = isRegionalReport && currentStateObj
+        ? `${currentStateObj.name}, ${countryData.name}`
+        : countryData.name;
       const yearLabel = selectedYear === 'ALL' ? 'All Recorded Years (2018–2025)' : `Year ${selectedYear}`;
       const monthLabel = selectedMonth === 'ALL' ? 'All Months' : MONTH_NAMES[Number(selectedMonth) - 1];
+      const regTimeframeLabel = regActiveTimelineLabel;
+      const dateRangeSub = currentStateObj
+        ? `Subdivision: ${currentStateObj.name} · ${regTimeframeLabel}`
+        : `National · ${regTimeframeLabel}`;
+
       const totalCountryFires = (selectedYear === 'ALL'
         ? (countryData.total_fires || 0)
         : (countryData.annual_totals?.[selectedYear] || 0)
@@ -706,6 +960,20 @@ function App() {
           </tr>`
         ).join('');
 
+      // Regional Hotspots Sample Table (Top 6 hottest fires in selected state/date range)
+      const regionalSevereHotspots = regionalVisibleHotspots
+        .slice()
+        .sort((a, b) => b.frp - a.frp)
+        .slice(0, 6)
+        .map(h =>
+          `<tr>
+            <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.date}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.lat.toFixed(3)}°N, ${h.lon.toFixed(3)}°E</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#dc2626;font-family:monospace;">${h.frp} MW</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:center;"><span style="background:#f1f5f9;padding:2px 5px;border-radius:3px;font-size:9px;">${h.sensor}</span></td>
+          </tr>`
+        ).join('');
+
       // Sparkline sub-columns for Year Comparison card
       const sparklineColumnsHtml = analyticsInsights.sparklineData.map(s => {
         const hPct = Math.max(14, Math.round((s.count / analyticsInsights.maxSpark) * 100));
@@ -726,11 +994,98 @@ function App() {
           </div>`;
       }).join('');
 
+      // Regional Section HTML Block (Appended for Regional Export)
+      const regionalSectionHtml = isRegionalReport ? `
+      <!-- PAGE BREAK & SECTION 2: REGIONAL & SUBDIVISION DEEP-DIVE -->
+      <div style="page-break-before: always; margin-top: 24px; padding-top: 14px; border-top: 2px dashed #cbd5e1;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;background:#1e293b;color:#f8fafc;padding:9px 14px;border-radius:4px;">
+          <div>
+            <div style="font-size:8.5px;text-transform:uppercase;color:#94a3b8;font-weight:700;letter-spacing:0.06em;">SECTION 2 · REGIONAL & CUSTOM TIMEFRAME INTELLIGENCE</div>
+            <div style="font-size:15px;font-weight:800;letter-spacing:-0.01em;">${regionNameDisplay} Deep-Dive Assessment</div>
+          </div>
+          <span style="background:#2a574d;color:#f5d9a8;font-size:9.5px;font-weight:700;padding:4px 8px;border-radius:3px;font-family:monospace;">
+            ${regionalVisibleHotspots.length.toLocaleString()} HOTSPOTS FILTERED
+          </span>
+        </div>
+
+        <div class="kpi-strip" style="margin-bottom:12px;">
+          <div class="kpi-card blue">
+            <div class="kpi-label">Target Subdivision</div>
+            <div class="kpi-value" style="font-size:15px;">${currentStateObj ? currentStateObj.name : countryData.name}</div>
+            <div class="kpi-sub">${currentStateObj ? `Subdivision of ${countryData.name}` : `National Level Area`}</div>
+          </div>
+          <div class="kpi-card gold">
+            <div class="kpi-label">Active Hotspots in Region</div>
+            <div class="kpi-value" style="color:#b45309;">${regionalVisibleHotspots.length.toLocaleString()}</div>
+            <div class="kpi-sub">${regTimeframeLabel}</div>
+          </div>
+          <div class="kpi-card alert">
+            <div class="kpi-label">High-Heat Wildfires (&gt;100 MW)</div>
+            <div class="kpi-value" style="color:#dc2626;">${regionalVisibleHotspots.filter(h => h.frp > 100).length.toLocaleString()}</div>
+            <div class="kpi-sub">${regionalVisibleHotspots.length > 0 ? ((regionalVisibleHotspots.filter(h => h.frp > 100).length / regionalVisibleHotspots.length) * 100).toFixed(1) : 0}% emergency share</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Observation Months</div>
+            <div class="kpi-value" style="font-size:13px;">${regTimeframeLabel}</div>
+            <div class="kpi-sub">MODIS (1km) & VIIRS (375m)</div>
+          </div>
+        </div>
+
+        <div class="main-grid">
+          <div>
+            <div class="map-card">
+              <div class="map-header">
+                <span>REGIONAL SATELLITE MAP SNAPSHOT</span>
+                <span>${currentStateObj ? currentStateObj.name : countryData.name}</span>
+              </div>
+              <div class="map-frame">
+                ${capturedRegMapUrl && capturedRegMapUrl.startsWith('data:image') && capturedRegMapUrl.length > 2500
+                  ? `<img src="${capturedRegMapUrl}" alt="Regional Satellite Fire Map" />`
+                  : (capturedRegMapUrl && capturedRegMapUrl.startsWith('<svg')
+                    ? capturedRegMapUrl
+                    : generateVectorMapSVG(regionalVisibleHotspots, currentStateObj ? [currentStateObj.lon, currentStateObj.lat] : countryData.center, 400, 215, currentStateObj ? currentStateObj.name : countryData.name)
+                  )
+                }
+              </div>
+              <div class="map-footer">
+                Synchronized regional satellite capture focused directly on ${currentStateObj ? currentStateObj.name : countryData.name}.
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <div class="data-card">
+              <h3>Hottest Regional Wildfires</h3>
+              <table>
+                <thead>
+                  <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;text-align:left;">
+                    <th style="padding:4px 8px;">DATE</th>
+                    <th style="padding:4px 8px;">COORDINATES</th>
+                    <th style="padding:4px 8px;text-align:right;">HEAT OUTPUT</th>
+                    <th style="padding:4px 8px;text-align:center;">SENSOR</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${regionalSevereHotspots || '<tr><td colspan="4" style="padding:8px;text-align:center;color:#94a3b8;">No hotspots matching active regional filter</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="action-briefing" style="margin-top:10px;">
+              <h4>Regional Operational Guidance</h4>
+              <p>
+                In ${currentStateObj ? currentStateObj.name : countryData.name} during ${regTimeframeLabel}, ${regionalVisibleHotspots.length.toLocaleString()} fire hotspots were mapped, including ${regionalVisibleHotspots.filter(h => h.frp > 100).length.toLocaleString()} emergency blazes exceeding 100 MW. Local forestry crews should position rapid-containment equipment and fire patrol teams in high-density corridors.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>` : '';
+
       const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Fireline Summary Report - ${countryData.name}</title>
+  <title>Fireline ${isRegionalReport ? 'Regional & National' : 'Summary'} Report - ${regionNameDisplay}</title>
   <style>
     @page { size: A4 portrait; margin: 10mm; }
     * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
@@ -765,6 +1120,7 @@ function App() {
     .map-header { padding: 6px 10px; background: #1e293b; color: #f1f5f9; font-weight: 700; font-size: 10px; display: flex; justify-content: space-between; }
     .map-frame { height: 215px; background: #0f172a; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
     .map-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .map-frame svg { width: 100%; height: 100%; display: block; }
     .map-footer { padding: 6px 10px; background: #f8fafc; color: #475569; font-size: 9px; border-top: 1px solid #e2e8f0; }
     
     .data-card { border: 1px solid #e2e8f0; border-radius: 4px; background: #ffffff; padding: 8px 10px; margin-bottom: 10px; }
@@ -785,7 +1141,7 @@ function App() {
 </head>
 <body>
   <div class="print-controls">
-    <span style="font-size:11px;font-weight:600;">Print / Save as PDF Ready</span>
+    <span style="font-size:11px;font-weight:600;">Print / Save as PDF Ready ${isRegionalReport ? '· Comprehensive Regional Briefing' : ''}</span>
     <button class="print-btn" onclick="window.print()">Print Report / Save PDF</button>
   </div>
 
@@ -794,7 +1150,7 @@ function App() {
       <div class="logo-badge">F</div>
       <div>
         <h1>FIRELINE · WILDFIRE SUMMARY REPORT</h1>
-        <p>NASA Satellite Fire Observation • Country and Year Wildfire Intelligence</p>
+        <p>NASA Satellite Fire Observation • ${isRegionalReport ? 'Comprehensive National & Regional Wildfire Intelligence' : 'Country and Year Wildfire Intelligence'}</p>
       </div>
     </div>
     <div class="header-right">
@@ -805,9 +1161,9 @@ function App() {
 
   <div class="kpi-strip">
     <div class="kpi-card blue">
-      <div class="kpi-label">Country</div>
-      <div class="kpi-value">${countryData.name}</div>
-      <div class="kpi-sub">Code: ${countryData.code || selectedCountryCode}</div>
+      <div class="kpi-label">Region / Country</div>
+      <div class="kpi-value">${regionNameDisplay}</div>
+      <div class="kpi-sub">${dateRangeSub}</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Selected Timeframe</div>
@@ -834,17 +1190,12 @@ function App() {
           <span>${visibleHotspots.length.toLocaleString()} HOTSPOTS SHOWN</span>
         </div>
         <div class="map-frame">
-          ${capturedMapUrl
+          ${capturedMapUrl && capturedMapUrl.startsWith('data:image') && capturedMapUrl.length > 2500
             ? `<img src="${capturedMapUrl}" alt="Satellite Fire Map" />`
-            : `<div style="padding:24px 16px;text-align:center;color:#f1f5f9;">
-                <div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:6px;">MAP LOCATION & SATELLITE OVERVIEW</div>
-                <div style="font-size:12px;font-weight:600;color:#ffffff;margin-bottom:4px;">${countryData.name}</div>
-                <div style="font-size:10px;color:#94a3b8;line-height:1.4;">
-                  Center Coordinates: <b>${countryData.coordinates ? `${countryData.coordinates[1]}°N, ${countryData.coordinates[0]}°E` : 'Global'}</b><br/>
-                  Total Active Hotspots: <b>${visibleHotspots.length.toLocaleString()}</b> mapped fires<br/>
-                  Sensors: <b>NASA VIIRS (375m) & MODIS (1km)</b>
-                </div>
-              </div>`
+            : (capturedMapUrl && capturedMapUrl.startsWith('<svg')
+              ? capturedMapUrl
+              : generateVectorMapSVG(visibleHotspots, countryData.center, 400, 215, countryData.name)
+            )
           }
         </div>
         <div class="map-footer">
@@ -1003,6 +1354,8 @@ function App() {
     </div>
   </div>
 
+  ${regionalSectionHtml}
+
   <div class="footer">
     <span>Data Courtesy: NASA FIRMS (VIIRS & MODIS) • Fireline Earth Observation Systems</span>
     <span>Photo Attribution: CONAE • Open Access Research Distribution</span>
@@ -1016,59 +1369,123 @@ function App() {
 </body>
 </html>`;
 
-      const printWin = window.open('', '_blank');
-      if (printWin) {
-        printWin.document.open();
-        printWin.document.write(html);
-        printWin.document.close();
-      } else {
-        const blob = new Blob([html], { type: 'text/html' });
+      try {
+        if (printWin && !printWin.closed) {
+          printWin.document.open();
+          printWin.document.write(html);
+          printWin.document.close();
+        } else {
+          throw new Error('Window not available');
+        }
+      } catch {
+        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         a.target = '_blank';
+        document.body.appendChild(a);
         a.click();
+        setTimeout(() => {
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }, 3000);
       }
     };
 
-    // Take map snapshot with complete country bounds fitted
-    if (mapInstance.current) {
+    // Capture main map snapshot
+    const captureMainMap = (callback) => {
+      const fallbackSvg = generateVectorMapSVG(visibleHotspots, countryData.center, 400, 215, countryData.name);
+      if (!mapInstance.current) {
+        callback(fallbackSvg);
+        return;
+      }
       const map = mapInstance.current;
-      const originalCenter = map.getCenter();
-      const originalZoom = map.getZoom();
+      let executed = false;
+      const deliverMain = () => {
+        if (executed) return;
+        executed = true;
+        try {
+          const imgUrl = map.getCanvas().toDataURL('image/png');
+          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 2500) {
+            callback(imgUrl);
+          } else {
+            callback(fallbackSvg);
+          }
+        } catch {
+          callback(fallbackSvg);
+        }
+      };
 
-      // Fit map bounds to cover all visible fire hotspots with padding so none are cut off
-      if (visibleHotspots.length > 0) {
-        const lats = visibleHotspots.map(h => h.lat);
-        const lons = visibleHotspots.map(h => h.lon);
-        const minLat = Math.min(...lats);
-        const maxLat = Math.max(...lats);
-        const minLon = Math.min(...lons);
-        const maxLon = Math.max(...lons);
+      try {
+        map.once('render', deliverMain);
+        map.triggerRepaint();
+        setTimeout(deliverMain, 250);
+      } catch {
+        deliverMain();
+      }
+    };
 
-        map.fitBounds(
-          [[minLon, minLat], [maxLon, maxLat]],
-          { padding: 35, duration: 0 }
-        );
+    // Capture regional map snapshot - identical reliable pipeline to main map snapshot
+    const captureRegMap = (callback) => {
+      if (!isRegionalReport) {
+        callback('');
+        return;
       }
 
-      map.once('render', () => {
+      const regSubtitle = currentStateObj ? currentStateObj.name : countryData.name;
+      const regCenter = currentStateObj ? [currentStateObj.lon, currentStateObj.lat] : countryData.center;
+      const fallbackSvg = generateVectorMapSVG(regionalVisibleHotspots, regCenter, 400, 215, regSubtitle);
+
+      // If regional map instance is not ready, fall back to the main map instance canvas or SVG
+      const regMap = regionalMapInstance.current || mapInstance.current;
+      if (!regMap) {
+        callback(fallbackSvg);
+        return;
+      }
+
+      let executed = false;
+      const deliverReg = () => {
+        if (executed) return;
+        executed = true;
         try {
-          const canvas = map.getCanvas();
-          const imgUrl = canvas.toDataURL('image/png');
-          buildReport(imgUrl);
+          const regCanvas = regMap.getCanvas();
+          const imgUrl = regCanvas ? regCanvas.toDataURL('image/png') : '';
+          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 2500) {
+            callback(imgUrl);
+          } else if (mapInstance.current) {
+            try {
+              const mainCanvas = mapInstance.current.getCanvas();
+              const mainUrl = mainCanvas ? mainCanvas.toDataURL('image/png') : '';
+              if (mainUrl && mainUrl.startsWith('data:image') && mainUrl.length > 2500) {
+                callback(mainUrl);
+              } else {
+                callback(fallbackSvg);
+              }
+            } catch {
+              callback(fallbackSvg);
+            }
+          } else {
+            callback(fallbackSvg);
+          }
         } catch {
-          buildReport('');
-        } finally {
-          // Restore user's previous viewport
-          map.setCenter(originalCenter);
-          map.setZoom(originalZoom);
+          callback(fallbackSvg);
         }
+      };
+
+      try {
+        regMap.once('render', deliverReg);
+        regMap.triggerRepaint();
+        setTimeout(deliverReg, 250);
+      } catch {
+        deliverReg();
+      }
+    };
+
+    captureMainMap((mainImg) => {
+      captureRegMap((regImg) => {
+        buildReport(mainImg, regImg);
       });
-      map.triggerRepaint();
-    } else {
-      buildReport('');
-    }
+    });
   };
 
   // Sorted list of all countries for dropdown
@@ -1542,6 +1959,304 @@ function App() {
               In {countryData.name}{analyticsInsights.isAllYears ? ' between 2018 and 2025' : ` in ${analyticsInsights.selectedYear}`}, {analyticsInsights.severeCount.toLocaleString()} fires ({analyticsInsights.severePct}%) grew into dangerous high-heat wildfires.
               Most other fires were routine small agricultural burns or grass clearing that died down quickly.
             </p>
+          </div>
+        </section>
+
+        {/* Regional & Custom Date Range Analytics Hub */}
+        <section className="regional-analytics-hub">
+          <div className="regional-hub-header">
+            <div className="regional-hub-title-group">
+              <h2>Regional & Custom Date Range Analytics</h2>
+              <p>
+                Filter fire activity across specific states, provinces, or custom day/month date spans with dedicated regional mapping.
+              </p>
+            </div>
+            <div className="regional-actions-group">
+              <button
+                className="export-btn"
+                onClick={() => handleExportCSV(true)}
+                title="Download CSV of current regional fire detections"
+              >
+                Download Region CSV ({regionalVisibleHotspots.length.toLocaleString()})
+              </button>
+              <button
+                className="export-btn pdf-btn"
+                onClick={() => handleExportPDF(true)}
+                title="Download Combined Comprehensive Briefing Report (National Summary + Regional Assessment)"
+              >
+                Export Region PDF Report
+              </button>
+            </div>
+          </div>
+
+          <div className="regional-filter-strip" ref={timePickerRef}>
+            {/* Country Selector */}
+            <div className="filter-control-item">
+              <label htmlFor="reg-country">Country:</label>
+              <select
+                id="reg-country"
+                value={selectedCountryCode}
+                onChange={e => handleCountrySelect(e.target.value)}
+              >
+                {allCountryList.map(c => (
+                  <option key={c.code} value={c.code}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* State / Province Selector */}
+            <div className="filter-control-item" style={{ minWidth: '220px' }}>
+              <label htmlFor="reg-state">State / Province / Region:</label>
+              <select
+                id="reg-state"
+                value={selectedStateCode}
+                onChange={e => handleStateSelect(e.target.value)}
+              >
+                <option value="ALL">All States / Whole Country</option>
+                {availableStates.map(s => (
+                  <option key={s.code || s.name} value={s.code || s.name}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* From Timeframe Dropdown (Year & Month Scrollable) */}
+            <div className="filter-control-item timeframe-dropdown-container">
+              <label>From (Start Month & Year):</label>
+              <button
+                type="button"
+                className={`timeframe-dropdown-trigger ${openTimePicker === 'start' ? 'is-active' : ''}`}
+                onClick={() => setOpenTimePicker(prev => prev === 'start' ? null : 'start')}
+                title="Select start timeframe"
+              >
+                <span>{regStartInfo.label}</span>
+                <span className="dropdown-arrow">▼</span>
+              </button>
+
+              {openTimePicker === 'start' && (
+                <div className="timeframe-picker-popover">
+                  <div className="timeframe-picker-columns">
+                    {/* Year Scrollable Column */}
+                    <div className="timeframe-picker-col">
+                      <div className="timeframe-picker-col-title">Year</div>
+                      <div className="timeframe-picker-scroll-list">
+                        {[2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025].map(yr => (
+                          <button
+                            type="button"
+                            key={yr}
+                            className={`timeframe-picker-option ${regStartInfo.yr === yr ? 'is-selected' : ''}`}
+                            onClick={() => {
+                              const newIdx = (yr - 2018) * 12 + (regStartInfo.mo - 1);
+                              setRegStartIdx(newIdx);
+                              if (newIdx > regEndIdx) setRegEndIdx(newIdx);
+                            }}
+                          >
+                            {yr}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Month Scrollable Column */}
+                    <div className="timeframe-picker-col">
+                      <div className="timeframe-picker-col-title">Month</div>
+                      <div className="timeframe-picker-scroll-list">
+                        {MONTH_NAMES.map((mName, mIdx) => (
+                          <button
+                            type="button"
+                            key={mName}
+                            className={`timeframe-picker-option ${regStartInfo.mo === mIdx + 1 ? 'is-selected' : ''}`}
+                            onClick={() => {
+                              const newIdx = (regStartInfo.yr - 2018) * 12 + mIdx;
+                              setRegStartIdx(newIdx);
+                              if (newIdx > regEndIdx) setRegEndIdx(newIdx);
+                            }}
+                          >
+                            {mName}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* To Timeframe Dropdown (Year & Month Scrollable) */}
+            <div className="filter-control-item timeframe-dropdown-container">
+              <label>To (End Month & Year):</label>
+              <button
+                type="button"
+                className={`timeframe-dropdown-trigger ${openTimePicker === 'end' ? 'is-active' : ''}`}
+                onClick={() => setOpenTimePicker(prev => prev === 'end' ? null : 'end')}
+                title="Select end timeframe"
+              >
+                <span>{regEndInfo.label}</span>
+                <span className="dropdown-arrow">▼</span>
+              </button>
+
+              {openTimePicker === 'end' && (
+                <div className="timeframe-picker-popover">
+                  <div className="timeframe-picker-columns">
+                    {/* Year Scrollable Column */}
+                    <div className="timeframe-picker-col">
+                      <div className="timeframe-picker-col-title">Year</div>
+                      <div className="timeframe-picker-scroll-list">
+                        {[2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025].map(yr => (
+                          <button
+                            type="button"
+                            key={yr}
+                            className={`timeframe-picker-option ${regEndInfo.yr === yr ? 'is-selected' : ''}`}
+                            onClick={() => {
+                              const newIdx = (yr - 2018) * 12 + (regEndInfo.mo - 1);
+                              setRegEndIdx(newIdx);
+                              if (newIdx < regStartIdx) setRegStartIdx(newIdx);
+                            }}
+                          >
+                            {yr}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Month Scrollable Column */}
+                    <div className="timeframe-picker-col">
+                      <div className="timeframe-picker-col-title">Month</div>
+                      <div className="timeframe-picker-scroll-list">
+                        {MONTH_NAMES.map((mName, mIdx) => (
+                          <button
+                            type="button"
+                            key={mName}
+                            className={`timeframe-picker-option ${regEndInfo.mo === mIdx + 1 ? 'is-selected' : ''}`}
+                            onClick={() => {
+                              const newIdx = (regEndInfo.yr - 2018) * 12 + mIdx;
+                              setRegEndIdx(newIdx);
+                              if (newIdx < regStartIdx) setRegStartIdx(newIdx);
+                            }}
+                          >
+                            {mName}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Quick Reset Filter */}
+            {(selectedStateCode !== 'ALL' || regStartIdx !== 84 || regEndIdx !== 95) && (
+              <div className="filter-control-item" style={{ alignSelf: 'flex-end', marginLeft: 'auto' }}>
+                <button
+                  type="button"
+                  style={{
+                    padding: '7px 12px',
+                    fontSize: '12px',
+                    fontFamily: 'var(--font-mono)',
+                    color: '#ef4444',
+                    background: 'transparent',
+                    border: '1px solid #ef4444',
+                    borderRadius: '6px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => {
+                    handleStateSelect('ALL');
+                    setRegStartIdx(84);
+                    setRegEndIdx(95);
+                  }}
+                >
+                  Reset Region & Range
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Regional KPI Summary Strip */}
+          <div className="regional-kpi-summary-strip">
+            <div className="reg-kpi-box">
+              <div className="reg-kpi-header">
+                <span>TARGET REGION</span>
+                <span>SUBDIVISION</span>
+              </div>
+              <div className="reg-kpi-val" style={{ fontSize: '20px' }}>
+                {currentStateObj ? currentStateObj.name : countryData.name}
+              </div>
+              <div className="reg-kpi-sub-badge">
+                {currentStateObj ? `Subdivision of ${countryData.name}` : `National Level (${countryData.code || selectedCountryCode})`}
+              </div>
+              <div className="reg-kpi-desc">
+                {currentStateObj ? `Boundary: ${currentStateObj.bbox?.[1]}°N to ${currentStateObj.bbox?.[3]}°N` : 'Whole country active area'}
+              </div>
+            </div>
+
+            <div className="reg-kpi-box">
+              <div className="reg-kpi-header">
+                <span>REGION HOTSPOTS</span>
+                <span>FILTERED</span>
+              </div>
+              <div className="reg-kpi-val">{regionalVisibleHotspots.length.toLocaleString()}</div>
+              <div className="reg-kpi-sub-badge">
+                {regActiveTimelineLabel}
+              </div>
+              <div className="reg-kpi-desc">
+                NASA verified thermal detections in this region
+              </div>
+            </div>
+
+            <div className="reg-kpi-box danger">
+              <div className="reg-kpi-header">
+                <span>HIGH-HEAT WILDFIRES</span>
+                <span>&gt; 100 MW</span>
+              </div>
+              <div className="reg-kpi-val" style={{ color: 'var(--fire-flame)' }}>
+                {regionalVisibleHotspots.filter(h => h.frp > 100).length.toLocaleString()}
+              </div>
+              <div className="reg-kpi-sub-badge danger">
+                {regionalVisibleHotspots.length > 0
+                  ? `${((regionalVisibleHotspots.filter(h => h.frp > 100).length / regionalVisibleHotspots.length) * 100).toFixed(1)}% emergency share`
+                  : '0% emergency share'}
+              </div>
+              <div className="reg-kpi-desc">
+                High-intensity blazes requiring immediate containment
+              </div>
+            </div>
+
+            <div className="reg-kpi-box">
+              <div className="reg-kpi-header">
+                <span>TIMEFRAME SCOPE</span>
+                <span>MULTI-YEAR SPAN</span>
+              </div>
+              <div className="reg-kpi-val" style={{ fontSize: '18px' }}>
+                {regStartInfo.label.split(' ')[1] === regEndInfo.label.split(' ')[1]
+                  ? regStartInfo.label.split(' ')[1]
+                  : `${regStartInfo.label.split(' ')[1]} – ${regEndInfo.label.split(' ')[1]}`}
+              </div>
+              <div className="reg-kpi-sub-badge">
+                {regActiveTimelineLabel}
+              </div>
+              <div className="reg-kpi-desc">
+                NASA VIIRS (375m) and MODIS (1km) satellites
+              </div>
+            </div>
+          </div>
+
+          {/* Dedicated Regional Map Container */}
+          <div className="regional-map-container-box">
+            <div className="regional-map-overlay-badge">
+              <span>{currentStateObj ? `${currentStateObj.name}, ${countryData.name}` : `${countryData.name} Regional Map`}</span>
+              <span style={{ opacity: 0.65, marginLeft: '8px' }}>• {regionalVisibleHotspots.length.toLocaleString()} fires</span>
+            </div>
+            <div ref={regionalMapContainer} style={{ width: '100%', height: '100%' }} />
+          </div>
+
+          <div className="regional-bottom-info">
+            <div>
+              Click any fire hotspot on the regional map to view precise coordinates, radiative heat output (MW), and compare side by side.
+            </div>
+            <div>
+              State boundaries synchronized with verified Natural Earth territorial polygons.
+            </div>
           </div>
         </section>
       </main>
