@@ -604,22 +604,66 @@ function App() {
     return { count, pct, label: 'across 2018-2025' };
   }, [countryData, selectedYear]);
 
+  // Generate self-contained vector SVG scatter map of country hotspots for guaranteed rendering
+  const generateVectorMapSVG = (hotspots, centerCoords, width = 360, height = 215) => {
+    if (!hotspots || hotspots.length === 0) {
+      return '';
+    }
+    const lats = hotspots.map(h => h.lat);
+    const lons = hotspots.map(h => h.lon);
+    let minLat = Math.min(...lats);
+    let maxLat = Math.max(...lats);
+    let minLon = Math.min(...lons);
+    let maxLon = Math.max(...lons);
+
+    if (maxLat - minLat < 1.0) { minLat -= 1.0; maxLat += 1.0; }
+    if (maxLon - minLon < 1.0) { minLon -= 1.0; maxLon += 1.0; }
+
+    const pad = 16;
+    const plotW = width - pad * 2;
+    const plotH = height - pad * 2;
+
+    const circles = hotspots.slice(0, 350).map(h => {
+      const x = pad + ((h.lon - minLon) / (maxLon - minLon)) * plotW;
+      const y = pad + ((maxLat - h.lat) / (maxLat - minLat)) * plotH;
+      const r = h.frp > 100 ? 4.5 : h.frp >= 25 ? 3.0 : 2.0;
+      const fill = h.frp > 100 ? '#b91c1c' : h.frp >= 50 ? '#ea580c' : h.frp >= 25 ? '#f59e0b' : '#fef08a';
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${fill}" opacity="0.85" />`;
+    }).join('');
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" style="width:100%;height:100%;background:#09121a;display:block;">
+      <defs>
+        <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#132330" stroke-width="0.7"/>
+        </pattern>
+      </defs>
+      <rect width="${width}" height="${height}" fill="url(#grid)" />
+      <text x="12" y="16" fill="#64748b" font-size="8.5" font-family="monospace">N: ${maxLat.toFixed(1)}° | E: ${maxLon.toFixed(1)}°</text>
+      <text x="12" y="${height - 6}" fill="#64748b" font-size="8.5" font-family="monospace">S: ${minLat.toFixed(1)}° | W: ${minLon.toFixed(1)}°</text>
+      ${circles}
+    </svg>`;
+  };
+
   // Export 1-Page Printable PDF Incident Briefing Report
   const handleExportPDF = () => {
     let mapDataUrl = '';
     try {
       if (mapInstance.current) {
-        // Redraw immediately so drawing buffer has the active frame
         mapInstance.current.triggerRepaint();
         const canvas = mapInstance.current.getCanvas();
         if (canvas) {
-          mapDataUrl = canvas.toDataURL('image/png');
+          const testUrl = canvas.toDataURL('image/png');
+          if (testUrl && testUrl.length > 500) {
+            mapDataUrl = testUrl;
+          }
         }
       }
     } catch (e) {
       console.warn('Map screenshot capture error:', e);
       mapDataUrl = '';
     }
+
+    const vectorMapSvg = generateVectorMapSVG(visibleHotspots, countryData.coordinates);
 
     const yearLabel = selectedYear === 'ALL' ? 'All Recorded Years (2018–2025)' : `Year ${selectedYear}`;
     const monthLabel = selectedMonth === 'ALL' ? 'All Months' : MONTH_NAMES[Number(selectedMonth) - 1];
@@ -780,15 +824,17 @@ function App() {
         <div class="map-frame">
           ${mapDataUrl && mapDataUrl.length > 100
             ? `<img src="${mapDataUrl}" alt="Satellite Fire Map" />`
-            : `<div style="padding:24px 16px;text-align:center;color:#f1f5f9;">
-                <div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:6px;">MAP LOCATION & SATELLITE OVERVIEW</div>
-                <div style="font-size:12px;font-weight:600;color:#ffffff;margin-bottom:4px;">${countryData.name}</div>
-                <div style="font-size:10px;color:#94a3b8;line-height:1.4;">
-                  Center Coordinates: <b>${countryData.coordinates ? `${countryData.coordinates[1]}°N, ${countryData.coordinates[0]}°E` : 'Global'}</b><br/>
-                  Total Active Hotspots: <b>${visibleHotspots.length.toLocaleString()}</b> mapped fires<br/>
-                  Sensors: <b>NASA VIIRS (375m) & MODIS (1km)</b>
-                </div>
-              </div>`
+            : vectorMapSvg
+              ? vectorMapSvg
+              : `<div style="padding:24px 16px;text-align:center;color:#f1f5f9;">
+                  <div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:6px;">MAP LOCATION & SATELLITE OVERVIEW</div>
+                  <div style="font-size:12px;font-weight:600;color:#ffffff;margin-bottom:4px;">${countryData.name}</div>
+                  <div style="font-size:10px;color:#94a3b8;line-height:1.4;">
+                    Center Coordinates: <b>${countryData.coordinates ? `${countryData.coordinates[1]}°N, ${countryData.coordinates[0]}°E` : 'Global'}</b><br/>
+                    Total Active Hotspots: <b>${visibleHotspots.length.toLocaleString()}</b> mapped fires<br/>
+                    Sensors: <b>NASA VIIRS (375m) & MODIS (1km)</b>
+                  </div>
+                </div>`
           }
         </div>
         <div class="map-footer">
