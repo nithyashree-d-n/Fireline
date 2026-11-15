@@ -619,121 +619,128 @@ function App() {
     if (maxLat - minLat < 1.0) { minLat -= 1.0; maxLat += 1.0; }
     if (maxLon - minLon < 1.0) { minLon -= 1.0; maxLon += 1.0; }
 
-    const pad = 16;
+    const pad = 18;
     const plotW = width - pad * 2;
     const plotH = height - pad * 2;
 
-    const circles = hotspots.slice(0, 350).map(h => {
+    const circles = hotspots.slice(0, 400).map(h => {
       const x = pad + ((h.lon - minLon) / (maxLon - minLon)) * plotW;
       const y = pad + ((maxLat - h.lat) / (maxLat - minLat)) * plotH;
-      const r = h.frp > 100 ? 4.5 : h.frp >= 25 ? 3.0 : 2.0;
-      const fill = h.frp > 100 ? '#b91c1c' : h.frp >= 50 ? '#ea580c' : h.frp >= 25 ? '#f59e0b' : '#fef08a';
-      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${fill}" opacity="0.85" />`;
+      const r = h.frp > 100 ? 5.0 : h.frp >= 25 ? 3.5 : 2.5;
+      const fill = h.frp > 100 ? '#ef4444' : h.frp >= 50 ? '#f97316' : h.frp >= 25 ? '#f59e0b' : '#fef08a';
+      return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${fill}" opacity="0.9" />`;
     }).join('');
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" style="width:100%;height:100%;background:#09121a;display:block;">
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="width:100%;height:100%;min-height:215px;background:#0f172a;display:block;">
       <defs>
-        <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse">
-          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="#132330" stroke-width="0.7"/>
+        <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+          <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#1e293b" stroke-width="0.8"/>
         </pattern>
       </defs>
+      <rect width="${width}" height="${height}" fill="#0f172a" />
       <rect width="${width}" height="${height}" fill="url(#grid)" />
-      <text x="12" y="16" fill="#64748b" font-size="8.5" font-family="monospace">N: ${maxLat.toFixed(1)}° | E: ${maxLon.toFixed(1)}°</text>
-      <text x="12" y="${height - 6}" fill="#64748b" font-size="8.5" font-family="monospace">S: ${minLat.toFixed(1)}° | W: ${minLon.toFixed(1)}°</text>
+      <text x="10" y="16" fill="#94a3b8" font-size="9" font-family="monospace">N: ${maxLat.toFixed(1)}° | E: ${maxLon.toFixed(1)}°</text>
+      <text x="10" y="${height - 8}" fill="#94a3b8" font-size="9" font-family="monospace">S: ${minLat.toFixed(1)}° | W: ${minLon.toFixed(1)}°</text>
+      <text x="${width - 12}" y="16" fill="#f59e0b" font-size="9" font-weight="bold" font-family="sans-serif" text-anchor="end">SATELLITE HEATMAP</text>
       ${circles}
     </svg>`;
   };
 
   // Export 1-Page Printable PDF Incident Briefing Report
   const handleExportPDF = () => {
-    let mapDataUrl = '';
-    try {
-      if (mapInstance.current) {
-        mapInstance.current.triggerRepaint();
-        const canvas = mapInstance.current.getCanvas();
-        if (canvas) {
-          const testUrl = canvas.toDataURL('image/png');
-          if (testUrl && testUrl.length > 500) {
-            mapDataUrl = testUrl;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('Map screenshot capture error:', e);
-      mapDataUrl = '';
-    }
+    const buildReport = (capturedMapUrl) => {
+      const yearLabel = selectedYear === 'ALL' ? 'All Recorded Years (2018–2025)' : `Year ${selectedYear}`;
+      const monthLabel = selectedMonth === 'ALL' ? 'All Months' : MONTH_NAMES[Number(selectedMonth) - 1];
+      const totalCountryFires = (selectedYear === 'ALL'
+        ? (countryData.total_fires || 0)
+        : (countryData.annual_totals?.[selectedYear] || 0)
+      ).toLocaleString();
 
-    const vectorMapSvg = generateVectorMapSVG(visibleHotspots, countryData.coordinates);
+      // Night share calculation
+      const dayFires = countryData.daynight?.day || 1;
+      const nightFires = countryData.daynight?.night || 0;
+      const totalDayNight = dayFires + nightFires;
+      const nightSharePct = ((nightFires / totalDayNight) * 100).toFixed(1);
 
-    const yearLabel = selectedYear === 'ALL' ? 'All Recorded Years (2018–2025)' : `Year ${selectedYear}`;
-    const monthLabel = selectedMonth === 'ALL' ? 'All Months' : MONTH_NAMES[Number(selectedMonth) - 1];
-    const totalCountryFires = (selectedYear === 'ALL'
-      ? (countryData.total_fires || 0)
-      : (countryData.annual_totals?.[selectedYear] || 0)
-    ).toLocaleString();
-
-    // Night share calculation
-    const dayFires = countryData.daynight?.day || 1;
-    const nightFires = countryData.daynight?.night || 0;
-    const totalDayNight = dayFires + nightFires;
-    const nightSharePct = ((nightFires / totalDayNight) * 100).toFixed(1);
-
-    // Monthly table rows with clean, human-readable labels
-    const topMonthsList = topPeakMonths.slice(0, 5).map((m, idx) =>
-      `<tr>
-        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#1e293b;">
-          <span style="display:inline-block;width:18px;height:18px;background:#e0f2fe;color:#0369a1;border-radius:50%;text-align:center;line-height:18px;font-size:9px;margin-right:6px;">${idx + 1}</span>
-          ${m.name}
-        </td>
-        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;font-weight:700;color:#0f172a;">${m.count.toLocaleString()}</td>
-        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b;font-size:9.5px;">${totalCountryFires !== '0' ? ((m.count / (selectedYear === 'ALL' ? countryData.total_fires : countryData.annual_totals?.[selectedYear])) * 100).toFixed(1) : 0}%</td>
-      </tr>`
-    ).join('');
-
-    // Annual comparison rows with clean visual progress bars
-    const availableYears = countryData.years || ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
-    const maxYrCount = Math.max(1, ...availableYears.map(yr => countryData.annual_totals?.[String(yr)] || 0));
-
-    const annualRows = availableYears.map(yr => {
-      const cnt = countryData.annual_totals?.[String(yr)] || 0;
-      const isSel = selectedYear === String(yr);
-      const barW = Math.max(6, Math.round((cnt / maxYrCount) * 100));
-      return `<tr style="${isSel ? 'background:#fef3c7;font-weight:700;' : ''}">
-        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">${yr} ${isSel ? '<span style="color:#b45309;font-size:9px;">[Selected]</span>' : ''}</td>
-        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${cnt.toLocaleString()}</td>
-        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;width:90px;">
-          <div style="background:#e2e8f0;height:7px;border-radius:3px;overflow:hidden;">
-            <div style="background:${isSel ? '#d97706' : '#2a574d'};height:100%;width:${barW}%;"></div>
-          </div>
-        </td>
-      </tr>`;
-    }).join('');
-
-    // High Heat Hotspots Sample Table (Top 5 largest fires)
-    const severeHotspots = (countryData.hotspots || [])
-      .filter(h => (selectedYear === 'ALL' || String(h.yr) === selectedYear) && (selectedMonth === 'ALL' || Number(h.mo) === Number(selectedMonth)))
-      .slice(0, 5)
-      .map(h =>
+      // Monthly table rows with clean, human-readable labels
+      const topMonthsList = topPeakMonths.slice(0, 5).map((m, idx) =>
         `<tr>
-          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.date}</td>
-          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.lat.toFixed(2)}°N, ${h.lon.toFixed(2)}°E</td>
-          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#dc2626;font-family:monospace;">${h.frp} MW</td>
-          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:center;"><span style="background:#f1f5f9;padding:2px 5px;border-radius:3px;font-size:9px;">${h.sensor}</span></td>
+          <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#1e293b;">
+            <span style="display:inline-block;width:18px;height:18px;background:#e0f2fe;color:#0369a1;border-radius:50%;text-align:center;line-height:18px;font-size:9px;margin-right:6px;">${idx + 1}</span>
+            ${m.name}
+          </td>
+          <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;font-weight:700;color:#0f172a;">${m.count.toLocaleString()}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b;font-size:9.5px;">${totalCountryFires !== '0' ? ((m.count / (selectedYear === 'ALL' ? countryData.total_fires : countryData.annual_totals?.[selectedYear])) * 100).toFixed(1) : 0}%</td>
         </tr>`
       ).join('');
 
-    // Simple, human-friendly summary text
-    const plainInference = `In ${countryData.name}, most fires happen during ${topPeakMonths.slice(0, 3).map(m => m.name).join(', ')}. Out of all fires detected, ${severeFireMetrics.count.toLocaleString()} (${severeFireMetrics.pct}%) reached emergency high heat (>100 MW). Firefighting teams should focus equipment, firebreaks, and safety crews before ${topPeakMonths[0]?.name || 'the peak month'} begins.`;
+      // Annual comparison rows with clean visual progress bars and forced background print colors
+      const availableYears = countryData.years || ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
+      const maxYrCount = Math.max(1, ...availableYears.map(yr => countryData.annual_totals?.[String(yr)] || 0));
 
-    const html = `<!DOCTYPE html>
+      const annualRows = availableYears.map(yr => {
+        const cnt = countryData.annual_totals?.[String(yr)] || 0;
+        const isSel = selectedYear === String(yr);
+        const barW = Math.max(6, Math.round((cnt / maxYrCount) * 100));
+        return `<tr style="${isSel ? 'background:#fef3c7;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-weight:700;' : ''}">
+          <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">${yr} ${isSel ? '<span style="color:#b45309;font-size:9px;">[Selected]</span>' : ''}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${cnt.toLocaleString()}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;width:90px;">
+            <div style="background:#e2e8f0;height:8px;border-radius:3px;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact;border:1px solid #cbd5e1;">
+              <div style="background:${isSel ? '#d97706' : '#2a574d'};height:100%;width:${barW}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;border-right:2px solid ${isSel ? '#92400e' : '#14312b'};"></div>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+
+      // High Heat Hotspots Sample Table (Top 5 largest fires)
+      const severeHotspots = (countryData.hotspots || [])
+        .filter(h => (selectedYear === 'ALL' || String(h.yr) === selectedYear) && (selectedMonth === 'ALL' || Number(h.mo) === Number(selectedMonth)))
+        .slice(0, 5)
+        .map(h =>
+          `<tr>
+            <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.date}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.lat.toFixed(2)}°N, ${h.lon.toFixed(2)}°E</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#dc2626;font-family:monospace;">${h.frp} MW</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:center;"><span style="background:#f1f5f9;padding:2px 5px;border-radius:3px;font-size:9px;">${h.sensor}</span></td>
+          </tr>`
+        ).join('');
+
+      // Sparkline sub-columns for Year Comparison card
+      const sparklineColumnsHtml = analyticsInsights.sparklineData.map(s => {
+        const hPct = Math.max(14, Math.round((s.count / analyticsInsights.maxSpark) * 100));
+        const isHit = analyticsInsights.selectedYear === s.year;
+        const formattedCount = s.count >= 1000000 
+          ? `${(s.count / 1000000).toFixed(1)}M` 
+          : s.count >= 1000 
+            ? `${(s.count / 1000).toFixed(0)}k` 
+            : s.count.toLocaleString();
+
+        return `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px;flex:1;background:${isHit ? '#fef3c7' : 'transparent'};padding:3px 1px;border-radius:3px;border-bottom:${isHit ? '2px solid #d97706' : 'none'};">
+            <span style="font-family:monospace;font-size:7.5px;color:${isHit ? '#b45309' : '#64748b'};font-weight:${isHit ? '700' : '500'};">${formattedCount}</span>
+            <div style="width:100%;max-width:14px;height:26px;background:#e2e8f0;border-radius:2px 2px 0 0;display:flex;align-items:flex-end;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <div style="width:100%;height:${hPct}%;background:${isHit ? '#d97706' : '#2a574d'};border-radius:2px 2px 0 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+            </div>
+            <span style="font-family:monospace;font-size:8px;font-weight:${isHit ? '700' : '600'};color:${isHit ? '#0f172a' : '#64748b'};">${s.year}</span>
+          </div>`;
+      }).join('');
+
+      const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>Fireline Summary Report - ${countryData.name}</title>
   <style>
     @page { size: A4 portrait; margin: 10mm; }
-    * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #0f172a; margin: 0; padding: 0; background: #ffffff; font-size: 10.5px; line-height: 1.35; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #0f172a; margin: 0; padding: 0; background: #ffffff; font-size: 10.5px; line-height: 1.35; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+    .print-controls { display: flex; justify-content: space-between; align-items: center; background: #0f172a; color: #ffffff; padding: 8px 16px; border-radius: 6px; margin-bottom: 12px; }
+    .print-btn { background: #2a574d; color: #ffffff; border: none; padding: 7px 16px; font-weight: 700; border-radius: 4px; cursor: pointer; font-size: 11px; }
+    .print-btn:hover { background: #397063; }
+    @media print {
+      .print-controls { display: none !important; }
+    }
     .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #2a574d; padding-bottom: 10px; margin-bottom: 12px; }
     .header-left { display: flex; align-items: center; gap: 10px; }
     .logo-badge { width: 34px; height: 34px; background: #2a574d; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #f5d9a8; font-weight: 800; font-size: 18px; }
@@ -754,11 +761,11 @@ function App() {
 
     .main-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 12px; margin-bottom: 12px; }
     
-    .map-card { border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; background: #0f172a; display: flex; flex-direction: column; }
+    .map-card { border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; background: #ffffff; display: flex; flex-direction: column; }
     .map-header { padding: 6px 10px; background: #1e293b; color: #f1f5f9; font-weight: 700; font-size: 10px; display: flex; justify-content: space-between; }
-    .map-frame { height: 215px; background: #0b131e; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+    .map-frame { height: 215px; background: #0f172a; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
     .map-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
-    .map-footer { padding: 6px 10px; background: #0f172a; color: #94a3b8; font-size: 9px; border-top: 1px solid #334155; }
+    .map-footer { padding: 6px 10px; background: #f8fafc; color: #475569; font-size: 9px; border-top: 1px solid #e2e8f0; }
     
     .data-card { border: 1px solid #e2e8f0; border-radius: 4px; background: #ffffff; padding: 8px 10px; margin-bottom: 10px; }
     .data-card h3 { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; color: #1e293b; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }
@@ -777,6 +784,11 @@ function App() {
   </style>
 </head>
 <body>
+  <div class="print-controls">
+    <span style="font-size:11px;font-weight:600;">Print / Save as PDF Ready</span>
+    <button class="print-btn" onclick="window.print()">Print Report / Save PDF</button>
+  </div>
+
   <div class="header">
     <div class="header-left">
       <div class="logo-badge">F</div>
@@ -822,23 +834,21 @@ function App() {
           <span>${visibleHotspots.length.toLocaleString()} HOTSPOTS SHOWN</span>
         </div>
         <div class="map-frame">
-          ${mapDataUrl && mapDataUrl.length > 100
-            ? `<img src="${mapDataUrl}" alt="Satellite Fire Map" />`
-            : vectorMapSvg
-              ? vectorMapSvg
-              : `<div style="padding:24px 16px;text-align:center;color:#f1f5f9;">
-                  <div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:6px;">MAP LOCATION & SATELLITE OVERVIEW</div>
-                  <div style="font-size:12px;font-weight:600;color:#ffffff;margin-bottom:4px;">${countryData.name}</div>
-                  <div style="font-size:10px;color:#94a3b8;line-height:1.4;">
-                    Center Coordinates: <b>${countryData.coordinates ? `${countryData.coordinates[1]}°N, ${countryData.coordinates[0]}°E` : 'Global'}</b><br/>
-                    Total Active Hotspots: <b>${visibleHotspots.length.toLocaleString()}</b> mapped fires<br/>
-                    Sensors: <b>NASA VIIRS (375m) & MODIS (1km)</b>
-                  </div>
-                </div>`
+          ${capturedMapUrl
+            ? `<img src="${capturedMapUrl}" alt="Satellite Fire Map" />`
+            : `<div style="padding:24px 16px;text-align:center;color:#f1f5f9;">
+                <div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:6px;">MAP LOCATION & SATELLITE OVERVIEW</div>
+                <div style="font-size:12px;font-weight:600;color:#ffffff;margin-bottom:4px;">${countryData.name}</div>
+                <div style="font-size:10px;color:#94a3b8;line-height:1.4;">
+                  Center Coordinates: <b>${countryData.coordinates ? `${countryData.coordinates[1]}°N, ${countryData.coordinates[0]}°E` : 'Global'}</b><br/>
+                  Total Active Hotspots: <b>${visibleHotspots.length.toLocaleString()}</b> mapped fires<br/>
+                  Sensors: <b>NASA VIIRS (375m) & MODIS (1km)</b>
+                </div>
+              </div>`
           }
         </div>
         <div class="map-footer">
-          NASA satellite sensors observe heat signatures across ${countryData.name}. Red and orange dots indicate high heat blazes.
+          Actual live satellite capture showing verified heat signatures across ${countryData.name}.
         </div>
       </div>
 
@@ -895,20 +905,102 @@ function App() {
     </div>
   </div>
 
-  <div class="threat-strip">
-    <div class="threat-box">
-      <h5>Severe High-Heat Wildfires</h5>
-      <p><b>${severeFireMetrics.count.toLocaleString()} fires</b> reached extreme heat (>100 MW). These blazes are strong enough to burn tree canopies and need heavy firefighting aircraft.</p>
+  <div class="threat-strip" style="grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px;">
+    <!-- Card 1: BURNING PATTERN -->
+    <div style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid #2a574d;border-radius:4px;padding:9px 10px;display:flex;flex-direction:column;justify-content:space-between;">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:9px;text-transform:uppercase;color:#64748b;font-weight:700;letter-spacing:0.04em;">BURNING PATTERN</span>
+          <span style="background:#f1f5f9;color:#2a574d;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:3px;border:1px solid #cbd5e1;">
+            ${analyticsInsights.concentrationPct}% in 3 Months
+          </span>
+        </div>
+        <h4 style="margin:2px 0 4px;font-size:12px;font-weight:800;color:#0f172a;">Peak Fire Months</h4>
+        <div style="font-size:14px;font-weight:800;color:#2a574d;margin-bottom:2px;">${analyticsInsights.top3Names || 'Peak Window'}</div>
+        <div style="font-size:9px;color:#64748b;margin-bottom:6px;">
+          ${analyticsInsights.isAllYears ? 'Busiest burning months across all years' : `Busiest burning months in ${analyticsInsights.selectedYear}`}
+        </div>
+        <div style="background:#e2e8f0;height:6px;border-radius:3px;overflow:hidden;margin-bottom:6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          <div style="background:#2a574d;height:100%;width:${Math.min(100, analyticsInsights.concentrationPct)}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:9px;color:#334155;line-height:1.4;">
+        In ${countryData.name}${analyticsInsights.isAllYears ? '' : ` in ${analyticsInsights.selectedYear}`}, ${analyticsInsights.concentrationPct}% of all fires (${analyticsInsights.top3Count.toLocaleString()} fires) broke out during ${analyticsInsights.top3Names}.
+        This shows most fires happen during this short window, helping response teams plan ahead before peak season begins.
+      </p>
     </div>
-    <div class="threat-box" style="border-left-color:#d97706;background:#fffbeb;border-color:#fef3c7;">
-      <h5 style="color:#b45309;">Night Burning Share</h5>
-      <p style="color:#92400e;">About <b>${nightSharePct}% of fires</b> continue burning through the night, which shows deep, persistent burning that resists normal overnight cooling.</p>
-    </div>
-  </div>
 
-  <div class="action-briefing">
-    <h4>Simple Guidance for Fire Response and Safety</h4>
-    <p>${plainInference}</p>
+    <!-- Card 2: YEAR COMPARISON -->
+    <div style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid ${analyticsInsights.isEscalating ? '#dc2626' : '#2a574d'};border-radius:4px;padding:9px 10px;display:flex;flex-direction:column;justify-content:space-between;">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:9px;text-transform:uppercase;color:#64748b;font-weight:700;letter-spacing:0.04em;">YEAR COMPARISON</span>
+          <span style="background:#f1f5f9;color:${analyticsInsights.isEscalating ? '#dc2626' : '#2a574d'};font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:3px;border:1px solid #cbd5e1;">
+            ${analyticsInsights.isEscalating ? `+${analyticsInsights.yoyPercent}% Increase` : `${analyticsInsights.yoyPercent}% Decrease`}
+          </span>
+        </div>
+        <h4 style="margin:2px 0 4px;font-size:12px;font-weight:800;color:#0f172a;">
+          ${analyticsInsights.isAllYears ? '2024 to 2025 Fire Change' : `${analyticsInsights.selectedYear} Fire Volume vs Earlier`}
+        </h4>
+        <div style="font-size:14px;font-weight:800;color:#0f172a;margin-bottom:2px;font-family:monospace;">
+          ${Number(analyticsInsights.curVol).toLocaleString()}
+          <span style="font-size:10px;font-weight:500;color:#64748b;margin-left:4px;font-family:sans-serif;">
+            ${analyticsInsights.baselineLabel.replace('vs ', 'vs ')} (${Number(analyticsInsights.baselineVol).toLocaleString()})
+          </span>
+        </div>
+        <div style="font-size:9px;color:#64748b;margin-bottom:6px;">
+          ${analyticsInsights.isEscalating ? 'More fires detected this year' : 'Fewer fires detected this year'}
+        </div>
+        <!-- Micro 8-Year Sparkline -->
+        <div style="display:flex;gap:3px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:3px;padding:4px 3px;margin-bottom:6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+          ${sparklineColumnsHtml}
+        </div>
+      </div>
+      <p style="margin:0;font-size:9px;color:#334155;line-height:1.4;">
+        In ${analyticsInsights.isAllYears ? '2025' : analyticsInsights.selectedYear}, fire activity changed by ${analyticsInsights.isEscalating ? `+${analyticsInsights.yoyPercent}%` : `${analyticsInsights.yoyPercent}%`} compared to ${analyticsInsights.baselineLabel.replace('vs ', '')}.
+        ${analyticsInsights.isEscalating
+          ? ' This means fire activity grew higher this year, so extra field monitoring is recommended.'
+          : ' This means fire activity stayed lower this year, helped by good weather and fire management.'}
+      </p>
+    </div>
+
+    <!-- Card 3: FIRE STRENGTH -->
+    <div style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid #dc2626;border-radius:4px;padding:9px 10px;display:flex;flex-direction:column;justify-content:space-between;">
+      <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <span style="font-size:9px;text-transform:uppercase;color:#64748b;font-weight:700;letter-spacing:0.04em;">FIRE STRENGTH</span>
+          <span style="background:#fef2f2;color:#dc2626;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:3px;border:1px solid #fecaca;">
+            ${analyticsInsights.severePct}% High Intensity
+          </span>
+        </div>
+        <h4 style="margin:2px 0 4px;font-size:12px;font-weight:800;color:#0f172a;">Large Emergency Wildfires</h4>
+        <div style="font-size:14px;font-weight:800;color:#dc2626;margin-bottom:2px;font-family:monospace;">
+          ${analyticsInsights.severeCount.toLocaleString()}
+          <span style="font-size:10px;font-weight:500;color:#64748b;margin-left:4px;font-family:sans-serif;">
+            large fires (${analyticsInsights.isAllYears ? '2018-25' : analyticsInsights.selectedYear})
+          </span>
+        </div>
+        <div style="font-size:9px;color:#64748b;margin-bottom:6px;">Fires strong enough to spread across tree tops</div>
+        
+        <!-- Stacked Energy Spectrum Bar -->
+        <div style="margin-bottom:6px;">
+          <div style="display:flex;height:7px;border-radius:3px;overflow:hidden;background:#e2e8f0;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+            <div style="background:#fef08a;width:${Math.max(4, analyticsInsights.lowPct)}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+            <div style="background:#f59e0b;width:${Math.max(3, analyticsInsights.modPct)}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+            <div style="background:#dc2626;width:${Math.max(2, analyticsInsights.severePct)}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:8px;color:#64748b;margin-top:3px;">
+            <span>Small & Crop: <b>${analyticsInsights.lowPct}%</b></span>
+            <span>Medium Brush: <b>${analyticsInsights.modPct}%</b></span>
+            <span style="color:#dc2626;">Large Wildfires: <b>${analyticsInsights.severePct}%</b></span>
+          </div>
+        </div>
+      </div>
+      <p style="margin:0;font-size:9px;color:#334155;line-height:1.4;">
+        In ${countryData.name}${analyticsInsights.isAllYears ? ' between 2018 and 2025' : ` in ${analyticsInsights.selectedYear}`}, ${analyticsInsights.severeCount.toLocaleString()} fires (${analyticsInsights.severePct}%) grew into dangerous high-heat wildfires.
+        Most other fires were routine small agricultural burns or grass clearing that died down quickly.
+      </p>
+    </div>
   </div>
 
   <div class="footer">
@@ -918,24 +1010,64 @@ function App() {
 
   <script>
     window.onload = function() {
-      setTimeout(function() { window.print(); }, 350);
+      setTimeout(function() { window.print(); }, 400);
     };
   </script>
 </body>
 </html>`;
 
-    const printWin = window.open('', '_blank');
-    if (printWin) {
-      printWin.document.open();
-      printWin.document.write(html);
-      printWin.document.close();
+      const printWin = window.open('', '_blank');
+      if (printWin) {
+        printWin.document.open();
+        printWin.document.write(html);
+        printWin.document.close();
+      } else {
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.click();
+      }
+    };
+
+    // Take map snapshot with complete country bounds fitted
+    if (mapInstance.current) {
+      const map = mapInstance.current;
+      const originalCenter = map.getCenter();
+      const originalZoom = map.getZoom();
+
+      // Fit map bounds to cover all visible fire hotspots with padding so none are cut off
+      if (visibleHotspots.length > 0) {
+        const lats = visibleHotspots.map(h => h.lat);
+        const lons = visibleHotspots.map(h => h.lon);
+        const minLat = Math.min(...lats);
+        const maxLat = Math.max(...lats);
+        const minLon = Math.min(...lons);
+        const maxLon = Math.max(...lons);
+
+        map.fitBounds(
+          [[minLon, minLat], [maxLon, maxLat]],
+          { padding: 35, duration: 0 }
+        );
+      }
+
+      map.once('render', () => {
+        try {
+          const canvas = map.getCanvas();
+          const imgUrl = canvas.toDataURL('image/png');
+          buildReport(imgUrl);
+        } catch {
+          buildReport('');
+        } finally {
+          // Restore user's previous viewport
+          map.setCenter(originalCenter);
+          map.setZoom(originalZoom);
+        }
+      });
+      map.triggerRepaint();
     } else {
-      const blob = new Blob([html], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.target = '_blank';
-      a.click();
+      buildReport('');
     }
   };
 
