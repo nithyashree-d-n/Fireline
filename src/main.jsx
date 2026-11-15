@@ -511,7 +511,7 @@ function App() {
   // Handle Country selection
   const handleCountrySelect = (code) => {
     setSelectedCountryCode(code);
-    setSelectedYear('ALL');
+    setSelectedYear('2025');
     setSelectedMonth('ALL');
     const target = globalData?.[code];
     if (target && mapInstance.current) {
