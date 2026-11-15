@@ -431,7 +431,8 @@ function App() {
       zoom: 4.4,
       minZoom: 1,
       maxZoom: 15,
-      attributionControl: false
+      attributionControl: false,
+      preserveDrawingBuffer: true
     });
 
     map.addControl(new NavigationControl({ showCompass: true }), 'top-right');
@@ -547,14 +548,70 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  // Top 5 peak burning months - dynamically reactive to selectedYear
+  const topPeakMonths = useMemo(() => {
+    const monthlySums = MONTH_NAMES.map((name, idx) => {
+      const mNum = idx + 1;
+      let count = 0;
+      if (selectedYear === 'ALL') {
+        count = countryData.calendar_matrix
+          ?.filter(c => Number(c.month) === Number(mNum))
+          ?.reduce((sum, c) => sum + Number(c.count), 0) || 0;
+      } else {
+        const entry = countryData.calendar_matrix
+          ?.find(c => Number(c.year) === Number(selectedYear) && Number(c.month) === Number(mNum));
+        count = entry ? Number(entry.count) : 0;
+      }
+      return { name, count, mNum };
+    });
+    return monthlySums.sort((a, b) => b.count - a.count).slice(0, 5);
+  }, [countryData.calendar_matrix, selectedYear]);
+
+  // Filtered fire count matching current user selections (year, month, sensor)
+  const filteredFireCount = useMemo(() => {
+    if (selectedYear === 'ALL' && selectedMonth === 'ALL') {
+      return countryData.total_fires || 0;
+    }
+    if (selectedYear !== 'ALL' && selectedMonth === 'ALL') {
+      return countryData.annual_totals?.[selectedYear] || 0;
+    }
+    if (selectedYear === 'ALL' && selectedMonth !== 'ALL') {
+      return countryData.calendar_matrix
+        ?.filter(c => Number(c.month) === Number(selectedMonth))
+        ?.reduce((sum, c) => sum + Number(c.count), 0) || 0;
+    }
+    // Specific year and specific month
+    const match = countryData.calendar_matrix?.find(
+      c => Number(c.year) === Number(selectedYear) && Number(c.month) === Number(selectedMonth)
+    );
+    return match ? match.count : 0;
+  }, [countryData, selectedYear, selectedMonth]);
+
+  // High-intensity (>100 MW) emergency wildfires - dynamically reactive to selectedYear
+  const severeFireMetrics = useMemo(() => {
+    if (selectedYear !== 'ALL' && countryData.annual_intensity_tiers?.[selectedYear]) {
+      const yrTier = countryData.annual_intensity_tiers[selectedYear];
+      const count = yrTier.high || 0;
+      const yrTotal = countryData.annual_totals?.[selectedYear] || (yrTier.low + yrTier.moderate + count) || 1;
+      const pct = ((count / yrTotal) * 100).toFixed(1);
+      return { count, pct, label: `in ${selectedYear}` };
+    }
+    // All years cumulative
+    const count = countryData.intensity_tiers?.high || 0;
+    const total = countryData.total_fires || 1;
+    const pct = ((count / total) * 100).toFixed(1);
+    return { count, pct, label: 'across 2018-2025' };
+  }, [countryData, selectedYear]);
+
   // Export 1-Page Printable PDF Incident Briefing Report
   const handleExportPDF = () => {
     let mapDataUrl = '';
     try {
-      if (map.current) {
-        mapDataUrl = map.current.getCanvas().toDataURL('image/png');
+      if (mapInstance.current) {
+        mapDataUrl = mapInstance.current.getCanvas().toDataURL('image/png');
       }
-    } catch {
+    } catch (e) {
+      console.warn('Map screenshot capture error:', e);
       mapDataUrl = '';
     }
 
@@ -566,7 +623,7 @@ function App() {
     ).toLocaleString();
 
     const topMonthsList = topPeakMonths.slice(0, 5).map((m, idx) =>
-      `<tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">#${idx + 1} ${m.month}</td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${m.count.toLocaleString()} fires</td></tr>`
+      `<tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">#${idx + 1} ${m.name}</td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${m.count.toLocaleString()} fires</td></tr>`
     ).join('');
 
     const annualRows = (countryData.years || ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025']).map(yr => {
@@ -627,12 +684,12 @@ function App() {
     <div class="card">
       <div class="card-lbl">Total Recorded Fires</div>
       <div class="card-val" style="color:#2a574d;">${totalCountryFires}</div>
-      <div class="card-sub">${filteredFiresCount.toLocaleString()} in current filter</div>
+      <div class="card-sub">${filteredFireCount.toLocaleString()} in current filter</div>
     </div>
     <div class="card">
       <div class="card-lbl">Emergency Wildfires (>100 MW)</div>
-      <div class="card-val" style="color:#b91c1c;">${emergencyWildfires.count.toLocaleString()}</div>
-      <div class="card-sub">${emergencyWildfires.pct}% of total fires</div>
+      <div class="card-val" style="color:#b91c1c;">${severeFireMetrics.count.toLocaleString()}</div>
+      <div class="card-sub">${severeFireMetrics.pct}% of total fires</div>
     </div>
   </div>
 
@@ -668,8 +725,8 @@ function App() {
   <div class="inferences">
     <h4>Key Actionable Briefing for Emergency Response</h4>
     <p>
-      In ${countryData.name}, ${emergencyWildfires.count.toLocaleString()} high-intensity emergency blazes (>100 MW) were observed, representing ${emergencyWildfires.pct}% of active burning.
-      Peak burning seasons cluster primarily around <b>${topPeakMonths.slice(0, 3).map(m => m.month).join(', ')}</b>. 
+      In ${countryData.name}, ${severeFireMetrics.count.toLocaleString()} high-intensity emergency blazes (>100 MW) were observed, representing ${severeFireMetrics.pct}% of active burning.
+      Peak burning seasons cluster primarily around <b>${topPeakMonths.slice(0, 3).map(m => m.name).join(', ')}</b>. 
       Fire departments and forestry agencies should prioritize aerial suppression and preventative fuel breaks prior to these key months.
     </p>
   </div>
@@ -687,68 +744,21 @@ function App() {
 </body>
 </html>`;
 
-    const printWin = window.open('', '_blank', 'width=900,height=750');
+    const printWin = window.open('', '_blank');
     if (printWin) {
       printWin.document.open();
       printWin.document.write(html);
       printWin.document.close();
+    } else {
+      // Fallback for pop-up blockers: open in iframe or direct data url
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.click();
     }
   };
-
-  // Top 5 peak burning months - dynamically reactive to selectedYear
-  const topPeakMonths = useMemo(() => {
-    const monthlySums = MONTH_NAMES.map((name, idx) => {
-      const mNum = idx + 1;
-      let count = 0;
-      if (selectedYear === 'ALL') {
-        count = countryData.calendar_matrix
-          ?.filter(c => Number(c.month) === Number(mNum))
-          ?.reduce((sum, c) => sum + Number(c.count), 0) || 0;
-      } else {
-        const entry = countryData.calendar_matrix
-          ?.find(c => Number(c.year) === Number(selectedYear) && Number(c.month) === Number(mNum));
-        count = entry ? Number(entry.count) : 0;
-      }
-      return { name, count, mNum };
-    });
-    return monthlySums.sort((a, b) => b.count - a.count).slice(0, 5);
-  }, [countryData.calendar_matrix, selectedYear]);
-
-  // Filtered fire count matching current user selections (year, month, sensor)
-  const filteredFireCount = useMemo(() => {
-    if (selectedYear === 'ALL' && selectedMonth === 'ALL') {
-      return countryData.total_fires || 0;
-    }
-    if (selectedYear !== 'ALL' && selectedMonth === 'ALL') {
-      return countryData.annual_totals?.[selectedYear] || 0;
-    }
-    if (selectedYear === 'ALL' && selectedMonth !== 'ALL') {
-      return countryData.calendar_matrix
-        ?.filter(c => Number(c.month) === Number(selectedMonth))
-        ?.reduce((sum, c) => sum + Number(c.count), 0) || 0;
-    }
-    // Specific year and specific month
-    const match = countryData.calendar_matrix?.find(
-      c => Number(c.year) === Number(selectedYear) && Number(c.month) === Number(selectedMonth)
-    );
-    return match ? match.count : 0;
-  }, [countryData, selectedYear, selectedMonth]);
-
-  // High-intensity (>100 MW) emergency wildfires - dynamically reactive to selectedYear
-  const severeFireMetrics = useMemo(() => {
-    if (selectedYear !== 'ALL' && countryData.annual_intensity_tiers?.[selectedYear]) {
-      const yrTier = countryData.annual_intensity_tiers[selectedYear];
-      const count = yrTier.high || 0;
-      const yrTotal = countryData.annual_totals?.[selectedYear] || (yrTier.low + yrTier.moderate + count) || 1;
-      const pct = ((count / yrTotal) * 100).toFixed(1);
-      return { count, pct, label: `in ${selectedYear}` };
-    }
-    // All years cumulative
-    const count = countryData.intensity_tiers?.high || 0;
-    const total = countryData.total_fires || 1;
-    const pct = ((count / total) * 100).toFixed(1);
-    return { count, pct, label: 'across 2018-2025' };
-  }, [countryData, selectedYear]);
 
   // Sorted list of all countries for dropdown
   const allCountryList = useMemo(() => {
