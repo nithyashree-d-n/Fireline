@@ -393,11 +393,23 @@ function App() {
       ? top3Months.map(item => MONTH_NAMES[item.month - 1]).join(', ')
       : 'Insufficient Data';
 
-    // 2. Year-by-Year distribution within the selected regional filter
+    // 2. Year-by-Year distribution within the selected regional filter (computed across all years for region/subdivision)
     const yearCounts = {};
     const availableYears = countryData.years ? countryData.years.map(String) : ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
     availableYears.forEach(yr => { yearCounts[yr] = 0; });
-    list.forEach(h => {
+
+    // Filter country hotspots strictly by selected state/subdivision boundary across all years
+    const regionalAllYearsHotspots = (countryData.hotspots || []).filter(h => {
+      const matchSensor = selectedSensor === 'ALL' || h.sensor === selectedSensor;
+      if (!matchSensor) return false;
+      if (currentStateObj && currentStateObj.bbox) {
+        const [minLon, minLat, maxLon, maxLat] = currentStateObj.bbox;
+        return h.lon >= minLon && h.lon <= maxLon && h.lat >= minLat && h.lat <= maxLat;
+      }
+      return true;
+    });
+
+    regionalAllYearsHotspots.forEach(h => {
       const yStr = String(h.yr);
       if (yearCounts[yStr] !== undefined) {
         yearCounts[yStr] = (yearCounts[yStr] || 0) + 1;
@@ -457,7 +469,7 @@ function App() {
       sparklineData,
       maxSpark
     };
-  }, [regionalVisibleHotspots, currentStateObj, countryData]);
+  }, [regionalVisibleHotspots, currentStateObj, countryData, selectedSensor]);
 
   // Color generator for Thermal Heat (YlOrRd)
   const getCellColor = (count) => {
@@ -1615,7 +1627,7 @@ function App() {
         executed = true;
         try {
           const imgUrl = map.getCanvas().toDataURL('image/png');
-          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 2500) {
+          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 500) {
             callback(imgUrl);
           } else {
             callback(fallbackSvg);
@@ -1628,13 +1640,13 @@ function App() {
       try {
         map.once('render', deliverMain);
         map.triggerRepaint();
-        setTimeout(deliverMain, 250);
+        setTimeout(deliverMain, 100);
       } catch {
         deliverMain();
       }
     };
 
-    // Capture regional map snapshot - identical reliable pipeline to main map snapshot
+    // Capture regional map snapshot - synchronous reliable capture
     const captureRegMap = (callback) => {
       if (!isRegionalReport) {
         callback('');
@@ -1645,62 +1657,41 @@ function App() {
       const regCenter = currentStateObj ? [currentStateObj.lon, currentStateObj.lat] : countryData.center;
       const fallbackSvg = generateVectorMapSVG(regionalVisibleHotspots, regCenter, 400, 215, regSubtitle);
 
-      // If regional map instance is not ready, fall back to the main map instance canvas or SVG
-      const regMap = regionalMapInstance.current || mapInstance.current;
-      if (!regMap) {
-        callback(fallbackSvg);
-        return;
-      }
-
-      // If state is selected, ensure regional map bounds fit that state immediately
-      if (currentStateObj && currentStateObj.bbox && regionalMapInstance.current) {
-        const [minLon, minLat, maxLon, maxLat] = currentStateObj.bbox;
-        try {
-          regionalMapInstance.current.fitBounds(
-            [[minLon, minLat], [maxLon, maxLat]],
-            { padding: 30, duration: 0 }
-          );
-        } catch {
-          // ignore fitBounds sync error
-        }
-      }
-
-      let executed = false;
-      const deliverReg = () => {
-        if (executed) return;
-        executed = true;
+      // Check if regional map canvas is available
+      const regMap = regionalMapInstance.current;
+      if (regMap) {
         try {
           const regCanvas = regMap.getCanvas();
-          const imgUrl = regCanvas ? regCanvas.toDataURL('image/png') : '';
-          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 500) {
-            callback(imgUrl);
-          } else if (mapInstance.current) {
-            try {
-              const mainCanvas = mapInstance.current.getCanvas();
-              const mainUrl = mainCanvas ? mainCanvas.toDataURL('image/png') : '';
-              if (mainUrl && mainUrl.startsWith('data:image') && mainUrl.length > 500) {
-                callback(mainUrl);
-              } else {
-                callback(fallbackSvg);
-              }
-            } catch {
-              callback(fallbackSvg);
+          if (regCanvas) {
+            const imgUrl = regCanvas.toDataURL('image/png');
+            if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 500) {
+              callback(imgUrl);
+              return;
             }
-          } else {
-            callback(fallbackSvg);
           }
         } catch {
-          callback(fallbackSvg);
+          // ignore canvas error and fall through
         }
-      };
-
-      try {
-        regMap.once('render', deliverReg);
-        regMap.triggerRepaint();
-        setTimeout(deliverReg, 300);
-      } catch {
-        deliverReg();
       }
+
+      // Check main map canvas if regional canvas was empty
+      if (mapInstance.current) {
+        try {
+          const mainCanvas = mapInstance.current.getCanvas();
+          if (mainCanvas) {
+            const mainUrl = mainCanvas.toDataURL('image/png');
+            if (mainUrl && mainUrl.startsWith('data:image') && mainUrl.length > 500) {
+              callback(mainUrl);
+              return;
+            }
+          }
+        } catch {
+          // ignore canvas error and fall through
+        }
+      }
+
+      // Guaranteed reliable vector fallback map
+      callback(fallbackSvg);
     };
 
     captureMainMap((mainImg) => {
