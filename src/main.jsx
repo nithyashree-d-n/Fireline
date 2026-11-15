@@ -367,6 +367,98 @@ function App() {
     };
   }, [countryData, selectedYear]);
 
+  // Derived Regional & Custom Date Range Analytics & Inferences (reacts to regionalVisibleHotspots, state, and timeline)
+  const regionalAnalyticsInsights = useMemo(() => {
+    const list = regionalVisibleHotspots || [];
+    const totalCount = list.length;
+    const regionName = currentStateObj ? currentStateObj.name : countryData.name;
+
+    // 1. Seasonal Concentration in Region
+    const monthlyCounts = {};
+    list.forEach(h => {
+      const m = Number(h.mo);
+      if (m >= 1 && m <= 12) {
+        monthlyCounts[m] = (monthlyCounts[m] || 0) + 1;
+      }
+    });
+
+    const sortedMonths = Object.entries(monthlyCounts)
+      .map(([m, cnt]) => ({ month: Number(m), count: cnt }))
+      .sort((a, b) => b.count - a.count);
+
+    const top3Months = sortedMonths.slice(0, 3);
+    const top3Count = top3Months.reduce((sum, item) => sum + item.count, 0);
+    const concentrationPct = totalCount > 0 ? Math.round((top3Count / totalCount) * 100) : 0;
+    const top3Names = top3Months.length > 0
+      ? top3Months.map(item => MONTH_NAMES[item.month - 1]).join(', ')
+      : 'Insufficient Data';
+
+    // 2. Year-by-Year distribution within the selected regional filter
+    const yearCounts = {};
+    const availableYears = countryData.years ? countryData.years.map(String) : ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
+    availableYears.forEach(yr => { yearCounts[yr] = 0; });
+    list.forEach(h => {
+      const yStr = String(h.yr);
+      if (yearCounts[yStr] !== undefined) {
+        yearCounts[yStr] = (yearCounts[yStr] || 0) + 1;
+      }
+    });
+
+    const sparklineData = availableYears.map(yr => ({
+      year: yr,
+      count: yearCounts[yr] || 0
+    }));
+    const maxSpark = Math.max(1, ...sparklineData.map(s => s.count));
+
+    // Trajectory: compare latest active year in range to prior year
+    const activeYearsWithData = availableYears.filter(yr => (yearCounts[yr] || 0) > 0);
+    const latestYr = activeYearsWithData.length > 0 ? activeYearsWithData[activeYearsWithData.length - 1] : '2025';
+    const priorYr = String(Number(latestYr) - 1);
+    const curVol = yearCounts[latestYr] || 0;
+    const baselineVol = yearCounts[priorYr] || 0;
+    const baselineLabel = `vs ${priorYr}`;
+    const diff = curVol - baselineVol;
+    const yoyPercent = baselineVol > 0 ? ((diff / baselineVol) * 100).toFixed(1) : 0;
+    const isEscalating = diff > 0;
+
+    // 3. Fire Strength & Intensity Tiers for Region
+    let lowCount = 0;
+    let modCount = 0;
+    let severeCount = 0;
+    list.forEach(h => {
+      if (h.frp > 100) severeCount++;
+      else if (h.frp >= 25) modCount++;
+      else lowCount++;
+    });
+
+    const tierTotal = totalCount || 1;
+    const severePct = ((severeCount / tierTotal) * 100).toFixed(1);
+    const modPct = ((modCount / tierTotal) * 100).toFixed(1);
+    const lowPct = ((lowCount / tierTotal) * 100).toFixed(1);
+
+    return {
+      regionName,
+      totalCount,
+      concentrationPct,
+      top3Names,
+      top3Count,
+      curVol,
+      baselineVol,
+      baselineLabel,
+      yoyPercent,
+      isEscalating,
+      latestYr,
+      severeCount,
+      severePct,
+      modCount,
+      modPct,
+      lowCount,
+      lowPct,
+      sparklineData,
+      maxSpark
+    };
+  }, [regionalVisibleHotspots, currentStateObj, countryData]);
+
   // Color generator for Thermal Heat (YlOrRd)
   const getCellColor = (count) => {
     if (!count) return 'var(--cell-bg-empty)';
@@ -2256,6 +2348,152 @@ function App() {
             </div>
             <div>
               State boundaries synchronized with verified Natural Earth territorial polygons.
+            </div>
+          </div>
+
+          {/* Regional & Custom Timeframe In-Depth Intelligence Cards */}
+          <div className="insights-grid" style={{ marginTop: '20px' }}>
+            {/* Regional Card 1: Seasonal Burning Concentration */}
+            <div className="insight-card">
+              <div className="insight-header">
+                <span className="insight-tag amber">REGIONAL BURNING PATTERN</span>
+                <span className="insight-metric-pill">
+                  {regionalAnalyticsInsights.concentrationPct}% in 3 Months
+                </span>
+              </div>
+              <h4>Regional Peak Burning Window</h4>
+              <div className="insight-stat-row">
+                <div className="insight-stat-val">{regionalAnalyticsInsights.top3Names}</div>
+                <div className="insight-stat-desc">
+                  Busiest burning months in {regionalAnalyticsInsights.regionName}
+                </div>
+              </div>
+              <div className="insight-bar-track">
+                <div
+                  className="insight-bar-fill"
+                  style={{
+                    width: `${Math.min(100, regionalAnalyticsInsights.concentrationPct)}%`,
+                    background: 'var(--accent-gold)'
+                  }}
+                />
+              </div>
+              <p>
+                In {regionalAnalyticsInsights.regionName} during {regActiveTimelineLabel}, {regionalAnalyticsInsights.concentrationPct}% of all fires ({regionalAnalyticsInsights.top3Count.toLocaleString()} fires) broke out during {regionalAnalyticsInsights.top3Names}.
+                Most burning activity within this area is compressed into this seasonal window.
+              </p>
+            </div>
+
+            {/* Regional Card 2: Year Comparison & Sparkline */}
+            <div className="insight-card">
+              <div className="insight-header">
+                <span className="insight-tag teal">REGIONAL YEAR COMPARISON</span>
+                <span
+                  className="insight-metric-pill"
+                  style={{
+                    color: regionalAnalyticsInsights.isEscalating ? '#ff4d4f' : 'var(--primary-green)',
+                    borderColor: regionalAnalyticsInsights.isEscalating ? 'rgba(255, 77, 79, 0.35)' : 'rgba(42, 87, 77, 0.35)'
+                  }}
+                >
+                  {regionalAnalyticsInsights.isEscalating ? `+${regionalAnalyticsInsights.yoyPercent}% Increase` : `${regionalAnalyticsInsights.yoyPercent}% Decrease`}
+                </span>
+              </div>
+              <h4>
+                {regionalAnalyticsInsights.latestYr} Regional Volume vs Earlier
+              </h4>
+              <div className="insight-stat-row">
+                <div className="insight-stat-val">
+                  {Number(regionalAnalyticsInsights.curVol).toLocaleString()}
+                  <span style={{ fontSize: '14px', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '6px' }}>
+                    {regionalAnalyticsInsights.baselineLabel} ({Number(regionalAnalyticsInsights.baselineVol).toLocaleString()})
+                  </span>
+                </div>
+                <div className="insight-stat-desc">
+                  {regionalAnalyticsInsights.isEscalating ? 'More fires detected in latest active year' : 'Fewer fires detected in latest active year'}
+                </div>
+              </div>
+
+              {/* Multi-Year Sparkline Mini Trend */}
+              <div className="sparkline-trend-container">
+                {regionalAnalyticsInsights.sparklineData.map(s => {
+                  const hPct = Math.max(14, Math.round((s.count / (regionalAnalyticsInsights.maxSpark || 1)) * 100));
+                  const formattedCount = s.count >= 1000000 
+                    ? `${(s.count / 1000000).toFixed(1)}M` 
+                    : s.count >= 1000 
+                      ? `${(s.count / 1000).toFixed(0)}k` 
+                      : s.count.toLocaleString();
+
+                  return (
+                    <div
+                      key={s.year}
+                      className="spark-bar-col"
+                      title={`${s.year}: ${s.count.toLocaleString()} regional fires`}
+                    >
+                      <span className="spark-bar-val">{formattedCount}</span>
+                      <div className="spark-bar-track">
+                        <div className="spark-bar-fill" style={{ height: `${hPct}%`, background: 'var(--accent-gold)' }} />
+                      </div>
+                      <span className="spark-bar-lbl">{s.year}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <p>
+                In {regionalAnalyticsInsights.regionName}, fire volume changed by {regionalAnalyticsInsights.isEscalating ? `+${regionalAnalyticsInsights.yoyPercent}%` : `${regionalAnalyticsInsights.yoyPercent}%`} between {regionalAnalyticsInsights.latestYr} and {regionalAnalyticsInsights.baselineLabel.replace('vs ', '')}.
+                {regionalAnalyticsInsights.isEscalating
+                  ? ' Fire activity increased in this regional boundary, signaling the need for heightened patrol preparedness.'
+                  : ' Fire incidence remained moderate across the selected timeframe.'}
+              </p>
+            </div>
+
+            {/* Regional Card 3: Fire Strength & Intensity Breakdown */}
+            <div className="insight-card">
+              <div className="insight-header">
+                <span className="insight-tag red">REGIONAL FIRE STRENGTH</span>
+                <span className="insight-metric-pill" style={{ color: 'var(--fire-flame)' }}>
+                  {regionalAnalyticsInsights.severePct}% High Intensity
+                </span>
+              </div>
+              <h4>Regional Emergency Wildfires</h4>
+              <div className="insight-stat-row">
+                <div className="insight-stat-val" style={{ color: 'var(--fire-flame)' }}>
+                  {regionalAnalyticsInsights.severeCount.toLocaleString()}
+                  <span style={{ fontSize: '13px', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: '6px' }}>
+                    large fires (&gt;100 MW)
+                  </span>
+                </div>
+                <div className="insight-stat-desc">Fires strong enough to spread across tree tops</div>
+              </div>
+
+              {/* Stacked Energy Spectrum Bar */}
+              <div className="energy-spectrum-bar-wrap">
+                <div className="energy-spectrum-bar">
+                  <div
+                    className="energy-seg low"
+                    style={{ width: `${Math.max(4, regionalAnalyticsInsights.lowPct)}%` }}
+                    title={`Small fires & field burning: ${regionalAnalyticsInsights.lowCount.toLocaleString()} (${regionalAnalyticsInsights.lowPct}%)`}
+                  />
+                  <div
+                    className="energy-seg mod"
+                    style={{ width: `${Math.max(3, regionalAnalyticsInsights.modPct)}%` }}
+                    title={`Moderate brush fires: ${regionalAnalyticsInsights.modCount.toLocaleString()} (${regionalAnalyticsInsights.modPct}%)`}
+                  />
+                  <div
+                    className="energy-seg high"
+                    style={{ width: `${Math.max(2, regionalAnalyticsInsights.severePct)}%` }}
+                    title={`Dangerous large wildfires: ${regionalAnalyticsInsights.severeCount.toLocaleString()} (${regionalAnalyticsInsights.severePct}%)`}
+                  />
+                </div>
+                <div className="energy-legend">
+                  <span>Small & Crop: <b>{regionalAnalyticsInsights.lowPct}%</b></span>
+                  <span>Medium Brush: <b>{regionalAnalyticsInsights.modPct}%</b></span>
+                  <span style={{ color: 'var(--fire-flame)' }}>Large Wildfires: <b>{regionalAnalyticsInsights.severePct}%</b></span>
+                </div>
+              </div>
+
+              <p>
+                In {regionalAnalyticsInsights.regionName} during {regActiveTimelineLabel}, {regionalAnalyticsInsights.severeCount.toLocaleString()} fires ({regionalAnalyticsInsights.severePct}%) grew into dangerous high-heat wildfires exceeding 100 MW radiative power.
+              </p>
             </div>
           </div>
         </section>
