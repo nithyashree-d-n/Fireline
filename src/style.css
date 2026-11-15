@@ -1075,36 +1075,75 @@ button {
   transition: width 0.3s ease;
 }
 
-/* 4-Year Sparkline Mini Trend */
+/* 8-Year Sparkline Mini Trend */
 .sparkline-trend-container {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  height: 48px;
-  align-items: end;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 5px;
+  height: 64px;
+  align-items: stretch;
   background: var(--bg-card-sub);
   border: 1px solid var(--border);
   border-radius: var(--radius-sharp);
-  padding: 6px 8px;
-  margin: 2px 0;
+  padding: 6px 6px 4px;
+  margin: 4px 0 6px;
 }
 
 .spark-bar-col {
   display: flex;
   flex-direction: column;
   align-items: center;
-  height: 100%;
   justify-content: flex-end;
   gap: 3px;
+  cursor: pointer;
+  padding: 2px 1px;
+  border-radius: var(--radius-sharp);
+  transition: background 0.15s ease, border-color 0.15s ease;
+  position: relative;
+}
+
+.spark-bar-col:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.spark-bar-col.active {
+  background: rgba(242, 189, 104, 0.08);
+  border-bottom: 2px solid var(--accent-gold);
+}
+
+.spark-bar-val {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-dim);
+  font-weight: 500;
+  line-height: 1;
+}
+
+.spark-bar-col.active .spark-bar-val {
+  color: var(--accent-gold);
+  font-weight: 700;
+}
+
+.spark-bar-track {
+  width: 100%;
+  max-width: 16px;
+  height: 30px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 2px 2px 0 0;
+  display: flex;
+  align-items: flex-end;
 }
 
 .spark-bar-fill {
   width: 100%;
-  max-width: 24px;
   background: var(--primary-green);
-  opacity: 0.45;
+  opacity: 0.55;
   border-radius: 2px 2px 0 0;
   transition: all 0.2s ease;
+}
+
+.spark-bar-col:hover .spark-bar-fill {
+  opacity: 0.85;
 }
 
 .spark-bar-col.active .spark-bar-fill {
@@ -1114,9 +1153,11 @@ button {
 
 .spark-bar-lbl {
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: 8.5px;
   color: var(--text-dim);
   font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
 }
 
 .spark-bar-col.active .spark-bar-lbl {

@@ -983,14 +983,28 @@ function App() {
               </div>
             </div>
 
-            {/* 4-Year Sparkline Mini Trend */}
+            {/* 8-Year Sparkline Mini Trend */}
             <div className="sparkline-trend-container">
               {analyticsInsights.sparklineData.map(s => {
-                const hPct = Math.max(12, Math.round((s.count / analyticsInsights.maxSpark) * 100));
+                const hPct = Math.max(14, Math.round((s.count / analyticsInsights.maxSpark) * 100));
                 const isHit = analyticsInsights.selectedYear === s.year;
+                const formattedCount = s.count >= 1000000 
+                  ? `${(s.count / 1000000).toFixed(1)}M` 
+                  : s.count >= 1000 
+                    ? `${(s.count / 1000).toFixed(0)}k` 
+                    : s.count.toLocaleString();
+
                 return (
-                  <div key={s.year} className={`spark-bar-col ${isHit ? 'active' : ''}`} title={`${s.year}: ${s.count.toLocaleString()} fires`}>
-                    <div className="spark-bar-fill" style={{ height: `${hPct}%` }} />
+                  <div
+                    key={s.year}
+                    className={`spark-bar-col ${isHit ? 'active' : ''}`}
+                    onClick={() => setSelectedYear(selectedYear === s.year ? 'ALL' : s.year)}
+                    title={`Click to filter by ${s.year} (${s.count.toLocaleString()} fires)`}
+                  >
+                    <span className="spark-bar-val">{formattedCount}</span>
+                    <div className="spark-bar-track">
+                      <div className="spark-bar-fill" style={{ height: `${hPct}%` }} />
+                    </div>
                     <span className="spark-bar-lbl">{s.year}</span>
                   </div>
                 );
