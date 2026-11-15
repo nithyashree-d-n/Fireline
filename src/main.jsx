@@ -470,6 +470,8 @@ function App() {
       : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
 
     map.setStyle(styleUrl);
+    map.getCanvas().getContext('webgl2', { preserveDrawingBuffer: true }) ||
+      map.getCanvas().getContext('webgl', { preserveDrawingBuffer: true });
     map.once('style.load', () => {
       addFireLayers(map);
       if (map.getSource('fires')) {
@@ -608,7 +610,11 @@ function App() {
     let mapDataUrl = '';
     try {
       if (mapInstance.current) {
-        mapDataUrl = mapInstance.current.getCanvas().toDataURL('image/png');
+        // Trigger render frame then get canvas
+        const canvas = mapInstance.current.getCanvas();
+        if (canvas) {
+          mapDataUrl = canvas.toDataURL('image/png');
+        }
       }
     } catch (e) {
       console.warn('Map screenshot capture error:', e);
@@ -622,98 +628,212 @@ function App() {
       : (countryData.annual_totals?.[selectedYear] || 0)
     ).toLocaleString();
 
+    // Night share calculation
+    const dayFires = countryData.daynight?.day || 1;
+    const nightFires = countryData.daynight?.night || 0;
+    const totalDayNight = dayFires + nightFires;
+    const nightSharePct = ((nightFires / totalDayNight) * 100).toFixed(1);
+
+    // Monthly table rows
     const topMonthsList = topPeakMonths.slice(0, 5).map((m, idx) =>
-      `<tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">#${idx + 1} ${m.name}</td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${m.count.toLocaleString()} fires</td></tr>`
+      `<tr>
+        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#1e293b;">
+          <span style="display:inline-block;width:18px;height:18px;background:#e0f2fe;color:#0369a1;border-radius:50%;text-align:center;line-height:18px;font-size:9px;margin-right:6px;">${idx + 1}</span>
+          ${m.name}
+        </td>
+        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;font-weight:700;color:#0f172a;">${m.count.toLocaleString()}</td>
+        <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:right;color:#64748b;font-size:9.5px;">${totalCountryFires !== '0' ? ((m.count / (selectedYear === 'ALL' ? countryData.total_fires : countryData.annual_totals?.[selectedYear])) * 100).toFixed(1) : 0}%</td>
+      </tr>`
     ).join('');
 
-    const annualRows = (countryData.years || ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025']).map(yr => {
+    // Annual comparison rows
+    const availableYears = countryData.years || ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
+    const maxYrCount = Math.max(1, ...availableYears.map(yr => countryData.annual_totals?.[String(yr)] || 0));
+
+    const annualRows = availableYears.map(yr => {
       const cnt = countryData.annual_totals?.[String(yr)] || 0;
       const isSel = selectedYear === String(yr);
-      return `<tr style="${isSel ? 'background:#fef3c7;font-weight:700;' : ''}"><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">${yr}</td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${cnt.toLocaleString()}</td></tr>`;
+      const barW = Math.max(6, Math.round((cnt / maxYrCount) * 100));
+      return `<tr style="${isSel ? 'background:#fef3c7;font-weight:700;' : ''}">
+        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">${yr} ${isSel ? '<span style="color:#b45309;font-size:9px;">[ACTIVE]</span>' : ''}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${cnt.toLocaleString()}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;width:90px;">
+          <div style="background:#e2e8f0;height:7px;border-radius:3px;overflow:hidden;">
+            <div style="background:${isSel ? '#d97706' : '#2a574d'};height:100%;width:${barW}%;"></div>
+          </div>
+        </td>
+      </tr>`;
     }).join('');
+
+    // High FRP Hotspots Sample Table (Top 5 severe blazes)
+    const severeHotspots = (countryData.hotspots || [])
+      .filter(h => (selectedYear === 'ALL' || String(h.yr) === selectedYear) && (selectedMonth === 'ALL' || Number(h.mo) === Number(selectedMonth)))
+      .slice(0, 5)
+      .map((h, i) =>
+        `<tr>
+          <td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.date}</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.lat.toFixed(2)}°N, ${h.lon.toFixed(2)}°E</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#b91c1c;font-family:monospace;">${h.frp} MW</td>
+          <td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;text-align:center;"><span style="background:#f1f5f9;padding:2px 5px;border-radius:3px;font-size:9px;">${h.sensor}</span></td>
+        </tr>`
+      ).join('');
 
     const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Fireline Incident Briefing Report - ${countryData.name}</title>
+  <title>Fireline Incident & Briefing Report - ${countryData.name}</title>
   <style>
-    @page { size: A4 portrait; margin: 12mm; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; margin: 0; padding: 0; background: #fff; font-size: 11px; line-height: 1.4; }
-    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #2a574d; padding-bottom: 8px; margin-bottom: 12px; }
-    .title h1 { margin: 0; font-size: 18px; color: #1e293b; font-weight: 800; letter-spacing: -0.01em; }
-    .title p { margin: 2px 0 0; color: #64748b; font-size: 10px; }
-    .badge { background: #2a574d; color: #fff; padding: 4px 8px; border-radius: 3px; font-weight: 700; font-size: 10px; font-family: monospace; }
-    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
-    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px 10px; }
-    .card-lbl { font-size: 9px; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 2px; }
-    .card-val { font-size: 16px; font-weight: 800; color: #0f172a; font-family: monospace; }
-    .card-sub { font-size: 9px; color: #475569; margin-top: 2px; }
-    .main-section { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 12px; }
-    .map-box { border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; background: #0f172a; text-align: center; }
-    .map-box img { width: 100%; height: 210px; object-fit: cover; display: block; }
-    .table-box { border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; background: #fff; }
-    .table-box h3 { margin: 0 0 6px; font-size: 11px; font-weight: 700; color: #334155; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
-    table { width: 100%; border-collapse: collapse; font-size: 10px; }
-    .inferences { background: #f1f5f9; border-left: 3px solid #2a574d; border-radius: 0 4px 4px 0; padding: 8px 12px; margin-bottom: 10px; }
-    .inferences h4 { margin: 0 0 4px; font-size: 11px; font-weight: 700; color: #1e293b; }
-    .inferences p { margin: 0; color: #334155; font-size: 10px; line-height: 1.45; }
-    .footer { border-top: 1px solid #e2e8f0; padding-top: 6px; display: flex; justify-content: space-between; color: #94a3b8; font-size: 8.5px; }
+    @page { size: A4 portrait; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #0f172a; margin: 0; padding: 0; background: #ffffff; font-size: 10.5px; line-height: 1.35; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #2a574d; padding-bottom: 10px; margin-bottom: 12px; }
+    .header-left { display: flex; align-items: center; gap: 10px; }
+    .logo-badge { width: 34px; height: 34px; background: #2a574d; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: #f5d9a8; font-weight: 800; font-size: 18px; }
+    .header-left h1 { margin: 0; font-size: 17px; font-weight: 800; color: #0f172a; letter-spacing: -0.01em; }
+    .header-left p { margin: 2px 0 0; color: #64748b; font-size: 10px; }
+    .header-right { text-align: right; }
+    .badge { display: inline-block; background: #2a574d; color: #fff; padding: 4px 8px; border-radius: 4px; font-weight: 700; font-size: 10px; font-family: monospace; letter-spacing: 0.04em; }
+    .report-date { font-size: 9px; color: #64748b; margin-top: 3px; }
+    
+    .kpi-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+    .kpi-card { background: #f8fafc; border: 1px solid #e2e8f0; border-top: 3px solid #2a574d; border-radius: 4px; padding: 8px 10px; }
+    .kpi-card.alert { border-top-color: #dc2626; }
+    .kpi-card.gold { border-top-color: #d97706; }
+    .kpi-card.blue { border-top-color: #0284c7; }
+    .kpi-label { font-size: 9px; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 3px; letter-spacing: 0.03em; }
+    .kpi-value { font-size: 18px; font-weight: 800; color: #0f172a; font-family: monospace; line-height: 1.1; }
+    .kpi-sub { font-size: 9px; color: #475569; margin-top: 3px; font-weight: 500; }
+
+    .main-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 12px; margin-bottom: 12px; }
+    
+    .map-card { border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; background: #0f172a; display: flex; flex-direction: column; }
+    .map-header { padding: 6px 10px; background: #1e293b; color: #f1f5f9; font-weight: 700; font-size: 10px; display: flex; justify-content: space-between; }
+    .map-frame { height: 210px; background: #0b131e; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+    .map-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .map-footer { padding: 6px 10px; background: #0f172a; color: #94a3b8; font-size: 9px; border-top: 1px solid #334155; }
+    
+    .data-card { border: 1px solid #e2e8f0; border-radius: 4px; background: #ffffff; padding: 8px 10px; margin-bottom: 10px; }
+    .data-card h3 { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; color: #1e293b; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
+    
+    .action-briefing { background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; border-radius: 4px; padding: 9px 12px; margin-bottom: 10px; }
+    .action-briefing h4 { margin: 0 0 3px; font-size: 11px; font-weight: 800; color: #14532d; }
+    .action-briefing p { margin: 0; color: #166534; font-size: 9.5px; line-height: 1.45; }
+
+    .threat-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .threat-box { background: #fef2f2; border: 1px solid #fee2e2; border-left: 3px solid #dc2626; border-radius: 4px; padding: 7px 10px; }
+    .threat-box h5 { margin: 0 0 2px; font-size: 10px; font-weight: 700; color: #991b1b; }
+    .threat-box p { margin: 0; font-size: 9px; color: #7f1d1d; }
+
+    .footer { border-top: 1px solid #e2e8f0; padding-top: 6px; display: flex; justify-content: space-between; color: #94a3b8; font-size: 8px; }
   </style>
 </head>
 <body>
   <div class="header">
-    <div class="title">
-      <h1>FIRELINE INCIDENT & BRIEFING REPORT</h1>
-      <p>Harmonized NASA MODIS & VIIRS Earth Observation Intelligence</p>
+    <div class="header-left">
+      <div class="logo-badge">F</div>
+      <div>
+        <h1>FIRELINE · EARTH OBSERVATION INCIDENT BRIEFING</h1>
+        <p>Harmonized NASA FIRMS VIIRS & MODIS Satellite Observations • Multi-Year Analytics</p>
+      </div>
     </div>
-    <div class="badge">OFFICIAL BRIEFING</div>
-  </div>
-
-  <div class="grid">
-    <div class="card">
-      <div class="card-lbl">Country / Region</div>
-      <div class="card-val">${countryData.name}</div>
-      <div class="card-sub">Region Code: ${countryData.code || selectedCountryCode}</div>
-    </div>
-    <div class="card">
-      <div class="card-lbl">Filter Timeframe</div>
-      <div class="card-val" style="font-size:13px;">${yearLabel}</div>
-      <div class="card-sub">${monthLabel}</div>
-    </div>
-    <div class="card">
-      <div class="card-lbl">Total Recorded Fires</div>
-      <div class="card-val" style="color:#2a574d;">${totalCountryFires}</div>
-      <div class="card-sub">${filteredFireCount.toLocaleString()} in current filter</div>
-    </div>
-    <div class="card">
-      <div class="card-lbl">Emergency Wildfires (>100 MW)</div>
-      <div class="card-val" style="color:#b91c1c;">${severeFireMetrics.count.toLocaleString()}</div>
-      <div class="card-sub">${severeFireMetrics.pct}% of total fires</div>
+    <div class="header-right">
+      <span class="badge">OFFICIAL BRIEFING</span>
+      <div class="report-date">Generated: ${new Date().toISOString().replace('T', ' ').substring(0, 16)} UTC</div>
     </div>
   </div>
 
-  <div class="main-section">
-    <div class="map-box">
-      ${mapDataUrl ? `<img src="${mapDataUrl}" alt="Satellite Fire Map" />` : '<div style="color:#cbd5e1;padding:80px 10px;font-size:11px;">Satellite Map Observation Capture</div>'}
-      <div style="padding:4px 6px;background:#0f172a;color:#94a3b8;font-size:8.5px;text-align:left;">
-        Displaying ${visibleHotspots.length.toLocaleString()} verified thermal hotspot coordinates across ${countryData.name}.
+  <div class="kpi-strip">
+    <div class="kpi-card blue">
+      <div class="kpi-label">Active Country</div>
+      <div class="kpi-value">${countryData.name}</div>
+      <div class="kpi-sub">ISO Code: ${countryData.code || selectedCountryCode}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Filter Timeframe</div>
+      <div class="kpi-value" style="font-size:14px;">${yearLabel}</div>
+      <div class="kpi-sub">Month Filter: ${monthLabel}</div>
+    </div>
+    <div class="kpi-card gold">
+      <div class="kpi-label">Recorded Fire Detections</div>
+      <div class="kpi-value" style="color:#2a574d;">${totalCountryFires}</div>
+      <div class="kpi-sub">${filteredFireCount.toLocaleString()} fires in active filter</div>
+    </div>
+    <div class="kpi-card alert">
+      <div class="kpi-label">Emergency Fires (>100 MW)</div>
+      <div class="kpi-value" style="color:#dc2626;">${severeFireMetrics.count.toLocaleString()}</div>
+      <div class="kpi-sub">${severeFireMetrics.pct}% of active burning</div>
+    </div>
+  </div>
+
+  <div class="main-grid">
+    <div>
+      <div class="map-card">
+        <div class="map-header">
+          <span>SATELLITE THERMAL RECONNAISSANCE</span>
+          <span>${visibleHotspots.length.toLocaleString()} HOTSPOTS</span>
+        </div>
+        <div class="map-frame">
+          ${mapDataUrl
+            ? `<img src="${mapDataUrl}" alt="Satellite Fire Map" />`
+            : `<div style="color:#94a3b8;text-align:center;padding:40px 10px;">
+                <div style="font-size:24px;color:#f59e0b;font-weight:700;margin-bottom:6px;">MAP ACTIVE</div>
+                <div style="font-size:11px;color:#cbd5e1;font-weight:600;">${countryData.name} Hotspot Overlay</div>
+                <div style="font-size:9.5px;color:#64748b;margin-top:4px;">${visibleHotspots.length.toLocaleString()} satellite thermal coordinates plotted</div>
+              </div>`
+          }
+        </div>
+        <div class="map-footer">
+          Sensor Harmonization: VIIRS (375m) + MODIS (1km) • Coordinates: ${countryData.coordinates ? `${countryData.coordinates[1]}°N, ${countryData.coordinates[0]}°E` : 'Global'}
+        </div>
+      </div>
+
+      <div class="data-card" style="margin-top:10px;">
+        <h3>Highest Thermal Radiance Hotspots (Peak FRP)</h3>
+        <table>
+          <thead>
+            <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;text-align:left;">
+              <th style="padding:4px 8px;">DATE</th>
+              <th style="padding:4px 8px;">COORDINATES</th>
+              <th style="padding:4px 8px;text-align:right;">HEAT OUTPUT</th>
+              <th style="padding:4px 8px;text-align:center;">SENSOR</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${severeHotspots || '<tr><td colspan="4" style="padding:8px;text-align:center;color:#94a3b8;">No high-intensity hotspots matching active filter</td></tr>'}
+          </tbody>
+        </table>
       </div>
     </div>
 
     <div>
-      <div class="table-box" style="margin-bottom:8px;">
+      <div class="data-card">
         <h3>Peak Fire Outbreak Months</h3>
         <table>
+          <thead>
+            <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;">
+              <th style="padding:4px 8px;text-align:left;">MONTH</th>
+              <th style="padding:4px 8px;text-align:right;">VOLUME</th>
+              <th style="padding:4px 8px;text-align:right;">SHARE</th>
+            </tr>
+          </thead>
           <tbody>
             ${topMonthsList}
           </tbody>
         </table>
       </div>
 
-      <div class="table-box">
-        <h3>Annual Burning History (2018-2025)</h3>
+      <div class="data-card">
+        <h3>8-Year Fire Trajectory (2018–2025)</h3>
         <table>
+          <thead>
+            <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;">
+              <th style="padding:4px 8px;text-align:left;">YEAR</th>
+              <th style="padding:4px 8px;text-align:right;">FIRES</th>
+              <th style="padding:4px 8px;text-align:center;">TREND</th>
+            </tr>
+          </thead>
           <tbody>
             ${annualRows}
           </tbody>
@@ -722,23 +842,33 @@ function App() {
     </div>
   </div>
 
-  <div class="inferences">
-    <h4>Key Actionable Briefing for Emergency Response</h4>
+  <div class="threat-strip">
+    <div class="threat-box">
+      <h5>Crown Fire and Emergency Heat Risk</h5>
+      <p><b>${severeFireMetrics.count.toLocaleString()}</b> detections reached extreme energy (>100 MW), hot enough to consume canopy crowns and resist initial ground crew suppression.</p>
+    </div>
+    <div class="threat-box" style="border-left-color:#d97706;background:#fffbeb;border-color:#fef3c7;">
+      <h5 style="color:#b45309;">Nocturnal Containment Indicator</h5>
+      <p style="color:#92400e;">Approximately <b>${nightSharePct}%</b> of country fires remain thermally active overnight, indicating persistent fuel beds capable of surviving night humidity recovery.</p>
+    </div>
+  </div>
+
+  <div class="action-briefing">
+    <h4>Actionable Strategic Prepositioning Recommendations</h4>
     <p>
-      In ${countryData.name}, ${severeFireMetrics.count.toLocaleString()} high-intensity emergency blazes (>100 MW) were observed, representing ${severeFireMetrics.pct}% of active burning.
-      Peak burning seasons cluster primarily around <b>${topPeakMonths.slice(0, 3).map(m => m.name).join(', ')}</b>. 
-      Fire departments and forestry agencies should prioritize aerial suppression and preventative fuel breaks prior to these key months.
+      In <b>${countryData.name}</b>, fire volume clusters primarily across <b>${topPeakMonths.slice(0, 3).map(m => m.name).join(', ')}</b>. 
+      Emergency services and forestry personnel should complete prescribed burning, clear critical utility fuel breaks, and preposition aerial retardant tankers 2 to 4 weeks prior to <b>${topPeakMonths[0]?.name || 'the peak month'}</b>.
     </p>
   </div>
 
   <div class="footer">
-    <span>Report Generated: ${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC</span>
-    <span>Photo credit: CONAE • Data courtesy of NASA FIRMS • Fireline Operational Intelligence</span>
+    <span>Data Courtesy: NASA FIRMS (VIIRS & MODIS Harmonized) • Fireline Earth Observation Systems</span>
+    <span>Photo Attribution: CONAE • Open Access Research Distribution</span>
   </div>
 
   <script>
     window.onload = function() {
-      setTimeout(function() { window.print(); }, 250);
+      setTimeout(function() { window.print(); }, 350);
     };
   </script>
 </body>
@@ -750,7 +880,6 @@ function App() {
       printWin.document.write(html);
       printWin.document.close();
     } else {
-      // Fallback for pop-up blockers: open in iframe or direct data url
       const blob = new Blob([html], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
