@@ -432,7 +432,8 @@ function App() {
       minZoom: 1,
       maxZoom: 15,
       attributionControl: false,
-      preserveDrawingBuffer: true
+      preserveDrawingBuffer: true,
+      fadeDuration: 0
     });
 
     map.addControl(new NavigationControl({ showCompass: true }), 'top-right');
@@ -470,8 +471,6 @@ function App() {
       : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
 
     map.setStyle(styleUrl);
-    map.getCanvas().getContext('webgl2', { preserveDrawingBuffer: true }) ||
-      map.getCanvas().getContext('webgl', { preserveDrawingBuffer: true });
     map.once('style.load', () => {
       addFireLayers(map);
       if (map.getSource('fires')) {
@@ -610,7 +609,8 @@ function App() {
     let mapDataUrl = '';
     try {
       if (mapInstance.current) {
-        // Trigger render frame then get canvas
+        // Redraw immediately so drawing buffer has the active frame
+        mapInstance.current.triggerRepaint();
         const canvas = mapInstance.current.getCanvas();
         if (canvas) {
           mapDataUrl = canvas.toDataURL('image/png');
@@ -634,7 +634,7 @@ function App() {
     const totalDayNight = dayFires + nightFires;
     const nightSharePct = ((nightFires / totalDayNight) * 100).toFixed(1);
 
-    // Monthly table rows
+    // Monthly table rows with clean, human-readable labels
     const topMonthsList = topPeakMonths.slice(0, 5).map((m, idx) =>
       `<tr>
         <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-weight:700;color:#1e293b;">
@@ -646,7 +646,7 @@ function App() {
       </tr>`
     ).join('');
 
-    // Annual comparison rows
+    // Annual comparison rows with clean visual progress bars
     const availableYears = countryData.years || ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'];
     const maxYrCount = Math.max(1, ...availableYears.map(yr => countryData.annual_totals?.[String(yr)] || 0));
 
@@ -655,7 +655,7 @@ function App() {
       const isSel = selectedYear === String(yr);
       const barW = Math.max(6, Math.round((cnt / maxYrCount) * 100));
       return `<tr style="${isSel ? 'background:#fef3c7;font-weight:700;' : ''}">
-        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">${yr} ${isSel ? '<span style="color:#b45309;font-size:9px;">[ACTIVE]</span>' : ''}</td>
+        <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">${yr} ${isSel ? '<span style="color:#b45309;font-size:9px;">[Selected]</span>' : ''}</td>
         <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${cnt.toLocaleString()}</td>
         <td style="padding:5px 8px;border-bottom:1px solid #e2e8f0;width:90px;">
           <div style="background:#e2e8f0;height:7px;border-radius:3px;overflow:hidden;">
@@ -665,24 +665,27 @@ function App() {
       </tr>`;
     }).join('');
 
-    // High FRP Hotspots Sample Table (Top 5 severe blazes)
+    // High Heat Hotspots Sample Table (Top 5 largest fires)
     const severeHotspots = (countryData.hotspots || [])
       .filter(h => (selectedYear === 'ALL' || String(h.yr) === selectedYear) && (selectedMonth === 'ALL' || Number(h.mo) === Number(selectedMonth)))
       .slice(0, 5)
-      .map((h, i) =>
+      .map(h =>
         `<tr>
-          <td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.date}</td>
-          <td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.lat.toFixed(2)}°N, ${h.lon.toFixed(2)}°E</td>
-          <td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#b91c1c;font-family:monospace;">${h.frp} MW</td>
-          <td style="padding:4px 8px;border-bottom:1px solid #f1f5f9;text-align:center;"><span style="background:#f1f5f9;padding:2px 5px;border-radius:3px;font-size:9px;">${h.sensor}</span></td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.date}</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;font-family:monospace;font-size:9.5px;">${h.lat.toFixed(2)}°N, ${h.lon.toFixed(2)}°E</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:right;font-weight:700;color:#dc2626;font-family:monospace;">${h.frp} MW</td>
+          <td style="padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:center;"><span style="background:#f1f5f9;padding:2px 5px;border-radius:3px;font-size:9px;">${h.sensor}</span></td>
         </tr>`
       ).join('');
+
+    // Simple, human-friendly summary text
+    const plainInference = `In ${countryData.name}, most fires happen during ${topPeakMonths.slice(0, 3).map(m => m.name).join(', ')}. Out of all fires detected, ${severeFireMetrics.count.toLocaleString()} (${severeFireMetrics.pct}%) reached emergency high heat (>100 MW). Firefighting teams should focus equipment, firebreaks, and safety crews before ${topPeakMonths[0]?.name || 'the peak month'} begins.`;
 
     const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Fireline Incident & Briefing Report - ${countryData.name}</title>
+  <title>Fireline Summary Report - ${countryData.name}</title>
   <style>
     @page { size: A4 portrait; margin: 10mm; }
     * { box-sizing: border-box; }
@@ -709,7 +712,7 @@ function App() {
     
     .map-card { border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; background: #0f172a; display: flex; flex-direction: column; }
     .map-header { padding: 6px 10px; background: #1e293b; color: #f1f5f9; font-weight: 700; font-size: 10px; display: flex; justify-content: space-between; }
-    .map-frame { height: 210px; background: #0b131e; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+    .map-frame { height: 215px; background: #0b131e; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
     .map-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
     .map-footer { padding: 6px 10px; background: #0f172a; color: #94a3b8; font-size: 9px; border-top: 1px solid #334155; }
     
@@ -734,36 +737,36 @@ function App() {
     <div class="header-left">
       <div class="logo-badge">F</div>
       <div>
-        <h1>FIRELINE · EARTH OBSERVATION INCIDENT BRIEFING</h1>
-        <p>Harmonized NASA FIRMS VIIRS & MODIS Satellite Observations • Multi-Year Analytics</p>
+        <h1>FIRELINE · WILDFIRE SUMMARY REPORT</h1>
+        <p>NASA Satellite Fire Observation • Country and Year Wildfire Intelligence</p>
       </div>
     </div>
     <div class="header-right">
-      <span class="badge">OFFICIAL BRIEFING</span>
+      <span class="badge">OFFICIAL REPORT</span>
       <div class="report-date">Generated: ${new Date().toISOString().replace('T', ' ').substring(0, 16)} UTC</div>
     </div>
   </div>
 
   <div class="kpi-strip">
     <div class="kpi-card blue">
-      <div class="kpi-label">Active Country</div>
+      <div class="kpi-label">Country</div>
       <div class="kpi-value">${countryData.name}</div>
-      <div class="kpi-sub">ISO Code: ${countryData.code || selectedCountryCode}</div>
+      <div class="kpi-sub">Code: ${countryData.code || selectedCountryCode}</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Filter Timeframe</div>
+      <div class="kpi-label">Selected Timeframe</div>
       <div class="kpi-value" style="font-size:14px;">${yearLabel}</div>
-      <div class="kpi-sub">Month Filter: ${monthLabel}</div>
+      <div class="kpi-sub">Month: ${monthLabel}</div>
     </div>
     <div class="kpi-card gold">
-      <div class="kpi-label">Recorded Fire Detections</div>
+      <div class="kpi-label">Total Fires Detected</div>
       <div class="kpi-value" style="color:#2a574d;">${totalCountryFires}</div>
-      <div class="kpi-sub">${filteredFireCount.toLocaleString()} fires in active filter</div>
+      <div class="kpi-sub">${filteredFireCount.toLocaleString()} fires in current filter</div>
     </div>
     <div class="kpi-card alert">
-      <div class="kpi-label">Emergency Fires (>100 MW)</div>
+      <div class="kpi-label">Emergency Wildfires (>100 MW)</div>
       <div class="kpi-value" style="color:#dc2626;">${severeFireMetrics.count.toLocaleString()}</div>
-      <div class="kpi-sub">${severeFireMetrics.pct}% of active burning</div>
+      <div class="kpi-sub">${severeFireMetrics.pct}% of all fires</div>
     </div>
   </div>
 
@@ -771,26 +774,30 @@ function App() {
     <div>
       <div class="map-card">
         <div class="map-header">
-          <span>SATELLITE THERMAL RECONNAISSANCE</span>
-          <span>${visibleHotspots.length.toLocaleString()} HOTSPOTS</span>
+          <span>ACTIVE FIRE MAP SNAPSHOT</span>
+          <span>${visibleHotspots.length.toLocaleString()} HOTSPOTS SHOWN</span>
         </div>
         <div class="map-frame">
-          ${mapDataUrl
+          ${mapDataUrl && mapDataUrl.length > 100
             ? `<img src="${mapDataUrl}" alt="Satellite Fire Map" />`
-            : `<div style="color:#94a3b8;text-align:center;padding:40px 10px;">
-                <div style="font-size:24px;color:#f59e0b;font-weight:700;margin-bottom:6px;">MAP ACTIVE</div>
-                <div style="font-size:11px;color:#cbd5e1;font-weight:600;">${countryData.name} Hotspot Overlay</div>
-                <div style="font-size:9.5px;color:#64748b;margin-top:4px;">${visibleHotspots.length.toLocaleString()} satellite thermal coordinates plotted</div>
+            : `<div style="padding:24px 16px;text-align:center;color:#f1f5f9;">
+                <div style="font-size:13px;font-weight:700;color:#f59e0b;margin-bottom:6px;">MAP LOCATION & SATELLITE OVERVIEW</div>
+                <div style="font-size:12px;font-weight:600;color:#ffffff;margin-bottom:4px;">${countryData.name}</div>
+                <div style="font-size:10px;color:#94a3b8;line-height:1.4;">
+                  Center Coordinates: <b>${countryData.coordinates ? `${countryData.coordinates[1]}°N, ${countryData.coordinates[0]}°E` : 'Global'}</b><br/>
+                  Total Active Hotspots: <b>${visibleHotspots.length.toLocaleString()}</b> mapped fires<br/>
+                  Sensors: <b>NASA VIIRS (375m) & MODIS (1km)</b>
+                </div>
               </div>`
           }
         </div>
         <div class="map-footer">
-          Sensor Harmonization: VIIRS (375m) + MODIS (1km) • Coordinates: ${countryData.coordinates ? `${countryData.coordinates[1]}°N, ${countryData.coordinates[0]}°E` : 'Global'}
+          NASA satellite sensors observe heat signatures across ${countryData.name}. Red and orange dots indicate high heat blazes.
         </div>
       </div>
 
       <div class="data-card" style="margin-top:10px;">
-        <h3>Highest Thermal Radiance Hotspots (Peak FRP)</h3>
+        <h3>Hottest Wildfires (Highest Heat Output)</h3>
         <table>
           <thead>
             <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;text-align:left;">
@@ -809,12 +816,12 @@ function App() {
 
     <div>
       <div class="data-card">
-        <h3>Peak Fire Outbreak Months</h3>
+        <h3>Peak Burning Months</h3>
         <table>
           <thead>
             <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;">
               <th style="padding:4px 8px;text-align:left;">MONTH</th>
-              <th style="padding:4px 8px;text-align:right;">VOLUME</th>
+              <th style="padding:4px 8px;text-align:right;">FIRES</th>
               <th style="padding:4px 8px;text-align:right;">SHARE</th>
             </tr>
           </thead>
@@ -825,7 +832,7 @@ function App() {
       </div>
 
       <div class="data-card">
-        <h3>8-Year Fire Trajectory (2018–2025)</h3>
+        <h3>Year-by-Year Fire Comparison (2018–2025)</h3>
         <table>
           <thead>
             <tr style="background:#f8fafc;color:#64748b;font-size:8.5px;">
@@ -844,25 +851,22 @@ function App() {
 
   <div class="threat-strip">
     <div class="threat-box">
-      <h5>Crown Fire and Emergency Heat Risk</h5>
-      <p><b>${severeFireMetrics.count.toLocaleString()}</b> detections reached extreme energy (>100 MW), hot enough to consume canopy crowns and resist initial ground crew suppression.</p>
+      <h5>Severe High-Heat Wildfires</h5>
+      <p><b>${severeFireMetrics.count.toLocaleString()} fires</b> reached extreme heat (>100 MW). These blazes are strong enough to burn tree canopies and need heavy firefighting aircraft.</p>
     </div>
     <div class="threat-box" style="border-left-color:#d97706;background:#fffbeb;border-color:#fef3c7;">
-      <h5 style="color:#b45309;">Nocturnal Containment Indicator</h5>
-      <p style="color:#92400e;">Approximately <b>${nightSharePct}%</b> of country fires remain thermally active overnight, indicating persistent fuel beds capable of surviving night humidity recovery.</p>
+      <h5 style="color:#b45309;">Night Burning Share</h5>
+      <p style="color:#92400e;">About <b>${nightSharePct}% of fires</b> continue burning through the night, which shows deep, persistent burning that resists normal overnight cooling.</p>
     </div>
   </div>
 
   <div class="action-briefing">
-    <h4>Actionable Strategic Prepositioning Recommendations</h4>
-    <p>
-      In <b>${countryData.name}</b>, fire volume clusters primarily across <b>${topPeakMonths.slice(0, 3).map(m => m.name).join(', ')}</b>. 
-      Emergency services and forestry personnel should complete prescribed burning, clear critical utility fuel breaks, and preposition aerial retardant tankers 2 to 4 weeks prior to <b>${topPeakMonths[0]?.name || 'the peak month'}</b>.
-    </p>
+    <h4>Simple Guidance for Fire Response and Safety</h4>
+    <p>${plainInference}</p>
   </div>
 
   <div class="footer">
-    <span>Data Courtesy: NASA FIRMS (VIIRS & MODIS Harmonized) • Fireline Earth Observation Systems</span>
+    <span>Data Courtesy: NASA FIRMS (VIIRS & MODIS) • Fireline Earth Observation Systems</span>
     <span>Photo Attribution: CONAE • Open Access Research Distribution</span>
   </div>
 
