@@ -1086,6 +1086,26 @@ function App() {
           </div>`;
       }).join('');
 
+      // Regional Sparkline sub-columns for Year Comparison card
+      const regionalSparklineColumnsHtml = (regionalAnalyticsInsights.sparklineData || []).map(s => {
+        const hPct = Math.max(14, Math.round((s.count / Math.max(1, regionalAnalyticsInsights.maxSpark || 1)) * 100));
+        const isHit = String(regionalAnalyticsInsights.latestYr) === String(s.year);
+        const formattedCount = s.count >= 1000000 
+          ? `${(s.count / 1000000).toFixed(1)}M` 
+          : s.count >= 1000 
+            ? `${(s.count / 1000).toFixed(0)}k` 
+            : s.count.toLocaleString();
+
+        return `
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px;flex:1;background:${isHit ? '#fef3c7' : 'transparent'};padding:3px 1px;border-radius:3px;border-bottom:${isHit ? '2px solid #d97706' : 'none'};">
+            <span style="font-family:monospace;font-size:7.5px;color:${isHit ? '#b45309' : '#64748b'};font-weight:${isHit ? '700' : '500'};">${formattedCount}</span>
+            <div style="width:100%;max-width:14px;height:26px;background:#e2e8f0;border-radius:2px 2px 0 0;display:flex;align-items:flex-end;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+              <div style="width:100%;height:${hPct}%;background:${isHit ? '#d97706' : '#2a574d'};border-radius:2px 2px 0 0;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+            </div>
+            <span style="font-family:monospace;font-size:8px;font-weight:${isHit ? '700' : '600'};color:${isHit ? '#0f172a' : '#64748b'};">${s.year}</span>
+          </div>`;
+      }).join('');
+
       // Regional Section HTML Block (Appended for Regional Export)
       const regionalSectionHtml = isRegionalReport ? `
       <!-- PAGE BREAK & SECTION 2: REGIONAL & SUBDIVISION DEEP-DIVE -->
@@ -1131,8 +1151,8 @@ function App() {
                 <span>${currentStateObj ? currentStateObj.name : countryData.name}</span>
               </div>
               <div class="map-frame">
-                ${capturedRegMapUrl && capturedRegMapUrl.startsWith('data:image') && capturedRegMapUrl.length > 2500
-                  ? `<img src="${capturedRegMapUrl}" alt="Regional Satellite Fire Map" />`
+                ${capturedRegMapUrl && capturedRegMapUrl.startsWith('data:image') && capturedRegMapUrl.length > 500
+                  ? `<img src="${capturedRegMapUrl}" alt="Regional Satellite Fire Map" style="width:100%;height:100%;object-fit:cover;display:block;" />`
                   : (capturedRegMapUrl && capturedRegMapUrl.startsWith('<svg')
                     ? capturedRegMapUrl
                     : generateVectorMapSVG(regionalVisibleHotspots, currentStateObj ? [currentStateObj.lon, currentStateObj.lat] : countryData.center, 400, 215, currentStateObj ? currentStateObj.name : countryData.name)
@@ -1169,6 +1189,103 @@ function App() {
                 In ${currentStateObj ? currentStateObj.name : countryData.name} during ${regTimeframeLabel}, ${regionalVisibleHotspots.length.toLocaleString()} fire hotspots were mapped, including ${regionalVisibleHotspots.filter(h => h.frp > 100).length.toLocaleString()} emergency blazes exceeding 100 MW. Local forestry crews should position rapid-containment equipment and fire patrol teams in high-density corridors.
               </p>
             </div>
+          </div>
+        </div>
+
+        <!-- Regional In-Depth Intelligence Cards (BURNING PATTERN, YEAR COMPARISON, FIRE STRENGTH) -->
+        <div class="threat-strip" style="grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; margin-bottom: 12px;">
+          <!-- Card 1: REGIONAL BURNING PATTERN -->
+          <div style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid #2a574d;border-radius:4px;padding:9px 10px;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <span style="font-size:9px;text-transform:uppercase;color:#64748b;font-weight:700;letter-spacing:0.04em;">REGIONAL BURNING PATTERN</span>
+                <span style="background:#f1f5f9;color:#2a574d;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:3px;border:1px solid #cbd5e1;">
+                  ${regionalAnalyticsInsights.concentrationPct}% in 3 Months
+                </span>
+              </div>
+              <h4 style="margin:2px 0 4px;font-size:12px;font-weight:800;color:#0f172a;">Regional Peak Burning Window</h4>
+              <div style="font-size:14px;font-weight:800;color:#2a574d;margin-bottom:2px;">${regionalAnalyticsInsights.top3Names || 'Peak Window'}</div>
+              <div style="font-size:9px;color:#64748b;margin-bottom:6px;">
+                Busiest burning months in ${regionalAnalyticsInsights.regionName}
+              </div>
+              <div style="background:#e2e8f0;height:6px;border-radius:3px;overflow:hidden;margin-bottom:6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+                <div style="background:#2a574d;height:100%;width:${Math.min(100, regionalAnalyticsInsights.concentrationPct)}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+              </div>
+            </div>
+            <p style="margin:0;font-size:9px;color:#334155;line-height:1.4;">
+              In ${regionalAnalyticsInsights.regionName} during ${regTimeframeLabel}, ${regionalAnalyticsInsights.concentrationPct}% of all fires (${regionalAnalyticsInsights.top3Count.toLocaleString()} fires) broke out during ${regionalAnalyticsInsights.top3Names}. Most burning activity within this area is compressed into this seasonal window.
+            </p>
+          </div>
+
+          <!-- Card 2: REGIONAL YEAR COMPARISON -->
+          <div style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid ${regionalAnalyticsInsights.isEscalating ? '#dc2626' : '#2a574d'};border-radius:4px;padding:9px 10px;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <span style="font-size:9px;text-transform:uppercase;color:#64748b;font-weight:700;letter-spacing:0.04em;">REGIONAL YEAR COMPARISON</span>
+                <span style="background:#f1f5f9;color:${regionalAnalyticsInsights.isEscalating ? '#dc2626' : '#2a574d'};font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:3px;border:1px solid #cbd5e1;">
+                  ${regionalAnalyticsInsights.isEscalating ? `+${regionalAnalyticsInsights.yoyPercent}% Increase` : `${regionalAnalyticsInsights.yoyPercent}% Decrease`}
+                </span>
+              </div>
+              <h4 style="margin:2px 0 4px;font-size:12px;font-weight:800;color:#0f172a;">
+                ${regionalAnalyticsInsights.latestYr} Regional Volume vs Earlier
+              </h4>
+              <div style="font-size:14px;font-weight:800;color:#0f172a;margin-bottom:2px;font-family:monospace;">
+                ${Number(regionalAnalyticsInsights.curVol).toLocaleString()}
+                <span style="font-size:10px;font-weight:500;color:#64748b;margin-left:4px;font-family:sans-serif;">
+                  ${regionalAnalyticsInsights.baselineLabel.replace('vs ', 'vs ')} (${Number(regionalAnalyticsInsights.baselineVol).toLocaleString()})
+                </span>
+              </div>
+              <div style="font-size:9px;color:#64748b;margin-bottom:6px;">
+                ${regionalAnalyticsInsights.isEscalating ? 'More fires detected in latest active year' : 'Fewer fires detected in latest active year'}
+              </div>
+              <!-- Micro 8-Year Sparkline -->
+              <div style="display:flex;gap:3px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:3px;padding:4px 3px;margin-bottom:6px;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+                ${regionalSparklineColumnsHtml}
+              </div>
+            </div>
+            <p style="margin:0;font-size:9px;color:#334155;line-height:1.4;">
+              In ${regionalAnalyticsInsights.regionName}, fire volume changed by ${regionalAnalyticsInsights.isEscalating ? `+${regionalAnalyticsInsights.yoyPercent}%` : `${regionalAnalyticsInsights.yoyPercent}%`} between ${regionalAnalyticsInsights.latestYr} and ${regionalAnalyticsInsights.baselineLabel.replace('vs ', '')}.
+              ${regionalAnalyticsInsights.isEscalating
+                ? ' Fire activity increased in this regional boundary, signaling the need for heightened patrol preparedness.'
+                : ' Fire activity stayed lower or stable in this timeframe.'}
+            </p>
+          </div>
+
+          <!-- Card 3: REGIONAL FIRE STRENGTH -->
+          <div style="background:#ffffff;border:1px solid #e2e8f0;border-top:3px solid #dc2626;border-radius:4px;padding:9px 10px;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+                <span style="font-size:9px;text-transform:uppercase;color:#64748b;font-weight:700;letter-spacing:0.04em;">REGIONAL FIRE STRENGTH</span>
+                <span style="background:#fef2f2;color:#dc2626;font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:3px;border:1px solid #fecaca;">
+                  ${regionalAnalyticsInsights.severePct}% High Intensity
+                </span>
+              </div>
+              <h4 style="margin:2px 0 4px;font-size:12px;font-weight:800;color:#0f172a;">Regional Emergency Wildfires</h4>
+              <div style="font-size:14px;font-weight:800;color:#dc2626;margin-bottom:2px;font-family:monospace;">
+                ${regionalAnalyticsInsights.severeCount.toLocaleString()}
+                <span style="font-size:10px;font-weight:500;color:#64748b;margin-left:4px;font-family:sans-serif;">
+                  large fires (>100 MW)
+                </span>
+              </div>
+              <div style="font-size:9px;color:#64748b;margin-bottom:6px;">Fires strong enough to spread across tree tops</div>
+              
+              <!-- Stacked Energy Spectrum Bar -->
+              <div style="margin-bottom:6px;">
+                <div style="display:flex;height:7px;border-radius:3px;overflow:hidden;background:#e2e8f0;-webkit-print-color-adjust:exact;print-color-adjust:exact;">
+                  <div style="background:#fef08a;width:${Math.max(4, regionalAnalyticsInsights.lowPct)}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+                  <div style="background:#f59e0b;width:${Math.max(3, regionalAnalyticsInsights.modPct)}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+                  <div style="background:#dc2626;width:${Math.max(2, regionalAnalyticsInsights.severePct)}%;-webkit-print-color-adjust:exact;print-color-adjust:exact;"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:8px;color:#64748b;margin-top:3px;">
+                  <span>Small & Crop: <b>${regionalAnalyticsInsights.lowPct}%</b></span>
+                  <span>Medium Brush: <b>${regionalAnalyticsInsights.modPct}%</b></span>
+                  <span style="color:#dc2626;">Large Wildfires: <b>${regionalAnalyticsInsights.severePct}%</b></span>
+                </div>
+              </div>
+            </div>
+            <p style="margin:0;font-size:9px;color:#334155;line-height:1.4;">
+              In ${regionalAnalyticsInsights.regionName} during ${regTimeframeLabel}, ${regionalAnalyticsInsights.severeCount.toLocaleString()} fires (${regionalAnalyticsInsights.severePct}%) grew into dangerous high-heat wildfires exceeding 100 MW radiative power.
+            </p>
           </div>
         </div>
       </div>` : '';
@@ -1282,8 +1399,8 @@ function App() {
           <span>${visibleHotspots.length.toLocaleString()} HOTSPOTS SHOWN</span>
         </div>
         <div class="map-frame">
-          ${capturedMapUrl && capturedMapUrl.startsWith('data:image') && capturedMapUrl.length > 2500
-            ? `<img src="${capturedMapUrl}" alt="Satellite Fire Map" />`
+          ${capturedMapUrl && capturedMapUrl.startsWith('data:image') && capturedMapUrl.length > 500
+            ? `<img src="${capturedMapUrl}" alt="Satellite Fire Map" style="width:100%;height:100%;object-fit:cover;display:block;" />`
             : (capturedMapUrl && capturedMapUrl.startsWith('<svg')
               ? capturedMapUrl
               : generateVectorMapSVG(visibleHotspots, countryData.center, 400, 215, countryData.name)
@@ -1535,6 +1652,19 @@ function App() {
         return;
       }
 
+      // If state is selected, ensure regional map bounds fit that state immediately
+      if (currentStateObj && currentStateObj.bbox && regionalMapInstance.current) {
+        const [minLon, minLat, maxLon, maxLat] = currentStateObj.bbox;
+        try {
+          regionalMapInstance.current.fitBounds(
+            [[minLon, minLat], [maxLon, maxLat]],
+            { padding: 30, duration: 0 }
+          );
+        } catch {
+          // ignore fitBounds sync error
+        }
+      }
+
       let executed = false;
       const deliverReg = () => {
         if (executed) return;
@@ -1542,13 +1672,13 @@ function App() {
         try {
           const regCanvas = regMap.getCanvas();
           const imgUrl = regCanvas ? regCanvas.toDataURL('image/png') : '';
-          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 2500) {
+          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 500) {
             callback(imgUrl);
           } else if (mapInstance.current) {
             try {
               const mainCanvas = mapInstance.current.getCanvas();
               const mainUrl = mainCanvas ? mainCanvas.toDataURL('image/png') : '';
-              if (mainUrl && mainUrl.startsWith('data:image') && mainUrl.length > 2500) {
+              if (mainUrl && mainUrl.startsWith('data:image') && mainUrl.length > 500) {
                 callback(mainUrl);
               } else {
                 callback(fallbackSvg);
@@ -1567,7 +1697,7 @@ function App() {
       try {
         regMap.once('render', deliverReg);
         regMap.triggerRepaint();
-        setTimeout(deliverReg, 250);
+        setTimeout(deliverReg, 300);
       } catch {
         deliverReg();
       }
