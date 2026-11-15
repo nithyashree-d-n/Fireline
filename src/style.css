@@ -617,6 +617,12 @@ button {
   gap: 10px;
 }
 
+.export-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .export-btn {
   background: var(--primary-green);
   color: #ffffff;
@@ -625,14 +631,28 @@ button {
   font-family: var(--font-mono);
   padding: 7px 14px;
   border-radius: var(--radius-sharp);
-  transition: background 0.12s ease;
+  transition: all 0.12s ease;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
 }
 
 .export-btn:hover {
   background: var(--primary-green-hover);
+}
+
+.export-btn.pdf-btn {
+  background: #1e293b;
+  border: 1px solid var(--border);
+  color: #f1f5f9;
+}
+
+.export-btn.pdf-btn:hover {
+  background: #334155;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
 }
 
 /* Multi-Year Burning Activity Calendar Matrix */

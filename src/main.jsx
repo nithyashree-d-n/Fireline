@@ -547,6 +547,154 @@ function App() {
     URL.revokeObjectURL(url);
   };
 
+  // Export 1-Page Printable PDF Incident Briefing Report
+  const handleExportPDF = () => {
+    let mapDataUrl = '';
+    try {
+      if (map.current) {
+        mapDataUrl = map.current.getCanvas().toDataURL('image/png');
+      }
+    } catch {
+      mapDataUrl = '';
+    }
+
+    const yearLabel = selectedYear === 'ALL' ? 'All Recorded Years (2018–2025)' : `Year ${selectedYear}`;
+    const monthLabel = selectedMonth === 'ALL' ? 'All Months' : MONTH_NAMES[Number(selectedMonth) - 1];
+    const totalCountryFires = (selectedYear === 'ALL'
+      ? (countryData.total_fires || 0)
+      : (countryData.annual_totals?.[selectedYear] || 0)
+    ).toLocaleString();
+
+    const topMonthsList = topPeakMonths.slice(0, 5).map((m, idx) =>
+      `<tr><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;font-weight:600;">#${idx + 1} ${m.month}</td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${m.count.toLocaleString()} fires</td></tr>`
+    ).join('');
+
+    const annualRows = (countryData.years || ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025']).map(yr => {
+      const cnt = countryData.annual_totals?.[String(yr)] || 0;
+      const isSel = selectedYear === String(yr);
+      return `<tr style="${isSel ? 'background:#fef3c7;font-weight:700;' : ''}"><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;">${yr}</td><td style="padding:4px 8px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace;">${cnt.toLocaleString()}</td></tr>`;
+    }).join('');
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Fireline Incident Briefing Report - ${countryData.name}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; color: #1e293b; margin: 0; padding: 0; background: #fff; font-size: 11px; line-height: 1.4; }
+    .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #2a574d; padding-bottom: 8px; margin-bottom: 12px; }
+    .title h1 { margin: 0; font-size: 18px; color: #1e293b; font-weight: 800; letter-spacing: -0.01em; }
+    .title p { margin: 2px 0 0; color: #64748b; font-size: 10px; }
+    .badge { background: #2a574d; color: #fff; padding: 4px 8px; border-radius: 3px; font-weight: 700; font-size: 10px; font-family: monospace; }
+    .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+    .card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px 10px; }
+    .card-lbl { font-size: 9px; text-transform: uppercase; color: #64748b; font-weight: 700; margin-bottom: 2px; }
+    .card-val { font-size: 16px; font-weight: 800; color: #0f172a; font-family: monospace; }
+    .card-sub { font-size: 9px; color: #475569; margin-top: 2px; }
+    .main-section { display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 12px; }
+    .map-box { border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; background: #0f172a; text-align: center; }
+    .map-box img { width: 100%; height: 210px; object-fit: cover; display: block; }
+    .table-box { border: 1px solid #e2e8f0; border-radius: 4px; padding: 8px; background: #fff; }
+    .table-box h3 { margin: 0 0 6px; font-size: 11px; font-weight: 700; color: #334155; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+    table { width: 100%; border-collapse: collapse; font-size: 10px; }
+    .inferences { background: #f1f5f9; border-left: 3px solid #2a574d; border-radius: 0 4px 4px 0; padding: 8px 12px; margin-bottom: 10px; }
+    .inferences h4 { margin: 0 0 4px; font-size: 11px; font-weight: 700; color: #1e293b; }
+    .inferences p { margin: 0; color: #334155; font-size: 10px; line-height: 1.45; }
+    .footer { border-top: 1px solid #e2e8f0; padding-top: 6px; display: flex; justify-content: space-between; color: #94a3b8; font-size: 8.5px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">
+      <h1>FIRELINE INCIDENT & BRIEFING REPORT</h1>
+      <p>Harmonized NASA MODIS & VIIRS Earth Observation Intelligence</p>
+    </div>
+    <div class="badge">OFFICIAL BRIEFING</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-lbl">Country / Region</div>
+      <div class="card-val">${countryData.name}</div>
+      <div class="card-sub">Region Code: ${countryData.code || selectedCountryCode}</div>
+    </div>
+    <div class="card">
+      <div class="card-lbl">Filter Timeframe</div>
+      <div class="card-val" style="font-size:13px;">${yearLabel}</div>
+      <div class="card-sub">${monthLabel}</div>
+    </div>
+    <div class="card">
+      <div class="card-lbl">Total Recorded Fires</div>
+      <div class="card-val" style="color:#2a574d;">${totalCountryFires}</div>
+      <div class="card-sub">${filteredFiresCount.toLocaleString()} in current filter</div>
+    </div>
+    <div class="card">
+      <div class="card-lbl">Emergency Wildfires (>100 MW)</div>
+      <div class="card-val" style="color:#b91c1c;">${emergencyWildfires.count.toLocaleString()}</div>
+      <div class="card-sub">${emergencyWildfires.pct}% of total fires</div>
+    </div>
+  </div>
+
+  <div class="main-section">
+    <div class="map-box">
+      ${mapDataUrl ? `<img src="${mapDataUrl}" alt="Satellite Fire Map" />` : '<div style="color:#cbd5e1;padding:80px 10px;font-size:11px;">Satellite Map Observation Capture</div>'}
+      <div style="padding:4px 6px;background:#0f172a;color:#94a3b8;font-size:8.5px;text-align:left;">
+        Displaying ${visibleHotspots.length.toLocaleString()} verified thermal hotspot coordinates across ${countryData.name}.
+      </div>
+    </div>
+
+    <div>
+      <div class="table-box" style="margin-bottom:8px;">
+        <h3>Peak Fire Outbreak Months</h3>
+        <table>
+          <tbody>
+            ${topMonthsList}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="table-box">
+        <h3>Annual Burning History (2018-2025)</h3>
+        <table>
+          <tbody>
+            ${annualRows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="inferences">
+    <h4>Key Actionable Briefing for Emergency Response</h4>
+    <p>
+      In ${countryData.name}, ${emergencyWildfires.count.toLocaleString()} high-intensity emergency blazes (>100 MW) were observed, representing ${emergencyWildfires.pct}% of active burning.
+      Peak burning seasons cluster primarily around <b>${topPeakMonths.slice(0, 3).map(m => m.month).join(', ')}</b>. 
+      Fire departments and forestry agencies should prioritize aerial suppression and preventative fuel breaks prior to these key months.
+    </p>
+  </div>
+
+  <div class="footer">
+    <span>Report Generated: ${new Date().toISOString().replace('T', ' ').substring(0, 19)} UTC</span>
+    <span>Photo credit: CONAE • Data courtesy of NASA FIRMS • Fireline Operational Intelligence</span>
+  </div>
+
+  <script>
+    window.onload = function() {
+      setTimeout(function() { window.print(); }, 250);
+    };
+  </script>
+</body>
+</html>`;
+
+    const printWin = window.open('', '_blank', 'width=900,height=750');
+    if (printWin) {
+      printWin.document.open();
+      printWin.document.write(html);
+      printWin.document.close();
+    }
+  };
+
   // Top 5 peak burning months - dynamically reactive to selectedYear
   const topPeakMonths = useMemo(() => {
     const monthlySums = MONTH_NAMES.map((name, idx) => {
@@ -847,9 +995,14 @@ function App() {
               {selectedYear !== 'ALL' && <span> in <b>{selectedYear}</b></span>}
               {selectedMonth !== 'ALL' && <span> (<b>{MONTH_NAMES[Number(selectedMonth) - 1]}</b>)</span>}
             </div>
-            <button className="export-btn" onClick={handleExportCSV}>
-              Download CSV ({visibleHotspots.length.toLocaleString()})
-            </button>
+            <div className="export-btn-group">
+              <button className="export-btn" onClick={handleExportCSV} title="Download CSV of visible fire coordinates">
+                Download CSV ({visibleHotspots.length.toLocaleString()})
+              </button>
+              <button className="export-btn pdf-btn" onClick={handleExportPDF} title="Download 1-page PDF Briefing Report">
+                Export PDF Report
+              </button>
+            </div>
           </div>
         </section>
 
