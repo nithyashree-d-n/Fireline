@@ -1348,9 +1348,9 @@ function App() {
     .data-card h3 { margin: 0 0 6px; font-size: 10.5px; font-weight: 700; color: #1e293b; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid #f1f5f9; padding-bottom: 4px; }
     table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
     
-    .action-briefing { background: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; border-radius: 4px; padding: 9px 12px; margin-bottom: 10px; }
-    .action-briefing h4 { margin: 0 0 3px; font-size: 11px; font-weight: 800; color: #14532d; }
-    .action-briefing p { margin: 0; color: #166534; font-size: 9.5px; line-height: 1.45; }
+    .action-briefing { background: #f8fafc; border: 1px solid #e2e8f0; border-left: 4px solid #2a574d; border-radius: 4px; padding: 9px 12px; margin-bottom: 10px; }
+    .action-briefing h4 { margin: 0 0 3px; font-size: 11px; font-weight: 800; color: #0f172a; }
+    .action-briefing p { margin: 0; color: #334155; font-size: 9.5px; line-height: 1.45; }
 
     .threat-strip { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
     .threat-box { background: #fef2f2; border: 1px solid #fee2e2; border-left: 3px solid #dc2626; border-radius: 4px; padding: 7px 10px; }
@@ -1646,7 +1646,7 @@ function App() {
       }
     };
 
-    // Capture regional map snapshot - synchronous reliable capture
+    // Capture regional map snapshot - using identical render-synchronized capture engine as main map
     const captureRegMap = (callback) => {
       if (!isRegionalReport) {
         callback('');
@@ -1657,41 +1657,37 @@ function App() {
       const regCenter = currentStateObj ? [currentStateObj.lon, currentStateObj.lat] : countryData.center;
       const fallbackSvg = generateVectorMapSVG(regionalVisibleHotspots, regCenter, 400, 215, regSubtitle);
 
-      // Check if regional map canvas is available
-      const regMap = regionalMapInstance.current;
-      if (regMap) {
+      // Check if regional map instance is available, fallback to mapInstance if not separate
+      const regMap = regionalMapInstance.current || mapInstance.current;
+      if (!regMap) {
+        callback(fallbackSvg);
+        return;
+      }
+
+      let executed = false;
+      const deliverReg = () => {
+        if (executed) return;
+        executed = true;
         try {
           const regCanvas = regMap.getCanvas();
-          if (regCanvas) {
-            const imgUrl = regCanvas.toDataURL('image/png');
-            if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 500) {
-              callback(imgUrl);
-              return;
-            }
+          const imgUrl = regCanvas ? regCanvas.toDataURL('image/png') : '';
+          if (imgUrl && imgUrl.startsWith('data:image') && imgUrl.length > 500) {
+            callback(imgUrl);
+          } else {
+            callback(fallbackSvg);
           }
         } catch {
-          // ignore canvas error and fall through
+          callback(fallbackSvg);
         }
-      }
+      };
 
-      // Check main map canvas if regional canvas was empty
-      if (mapInstance.current) {
-        try {
-          const mainCanvas = mapInstance.current.getCanvas();
-          if (mainCanvas) {
-            const mainUrl = mainCanvas.toDataURL('image/png');
-            if (mainUrl && mainUrl.startsWith('data:image') && mainUrl.length > 500) {
-              callback(mainUrl);
-              return;
-            }
-          }
-        } catch {
-          // ignore canvas error and fall through
-        }
+      try {
+        regMap.once('render', deliverReg);
+        regMap.triggerRepaint();
+        setTimeout(deliverReg, 100);
+      } catch {
+        deliverReg();
       }
-
-      // Guaranteed reliable vector fallback map
-      callback(fallbackSvg);
     };
 
     captureMainMap((mainImg) => {
