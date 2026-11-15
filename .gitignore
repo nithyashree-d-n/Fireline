@@ -9,4 +9,5 @@ data/
 *.duckdb
 *.parquet
 *.csv
+public/app_data.json
 test-results/
