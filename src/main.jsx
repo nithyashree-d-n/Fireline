@@ -51,7 +51,7 @@ async function fetchLocationName(lat, lon, fallbackCountry = '') {
 function App() {
   setWorkerUrl(workerUrl);
 
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState('light');
   const [globalData, setGlobalData] = useState(null);
   const [selectedCountryCode, setSelectedCountryCode] = useState('India');
   const [selectedYear, setSelectedYear] = useState('2025');
