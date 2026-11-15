@@ -1,45 +1,93 @@
-# Fireline: Harmonized MODIS + VIIRS Hot Spots
+# Fireline: Global NASA Wildfire Intelligence System
 
-Fireline harmonizes NASA FIRMS active-fire detections into daily spatial cell-days and an interactive historical activity calendar. The Python pipeline scans global bulk CSV archives directly from disk with DuckDB, filters and aggregates out of core, and writes a DuckDB archive plus CSV, Parquet, and browser JSON outputs.
+Fireline is a satellite observation and wildfire intelligence system developed for the NASA Space Apps Challenge. The platform processes multi-sensor active fire detections from NASA FIRMS (MODIS Terra/Aqua and VIIRS Suomi-NPP / NOAA-20 / NOAA-21), harmonizing raw satellite observations into structured, high-performance spatial analytics covering 200+ countries and global territories across 2018–2025.
 
-> **Data status:** This workspace has no raw satellite CSV files in `data/`; the app therefore displays a clearly labeled synthetic preview. Preview points are not NASA observations.
+---
 
-## Run locally
+## Key Features
 
-```powershell
-cd D:\harmonization_nasa
-.\.venv\Scripts\Activate.ps1
-python pipeline\harmonize.py
-npm run dev
+- **Decoupled Dual-Map Architecture**:
+  - **Upper National Map**: Dedicated nationwide overview with Year (2018–2025), Month, and Sensor filters.
+  - **Lower Regional Deep-Dive Map**: Independent regional viewport filtered by state/subdivision and custom start/end month-year date ranges.
+- **True Combustion Thermal Color Spectrum**: Thermal dots mapped along physics-based combustion temperatures (pale lemon yellow to amber, orange, vermilion, and deep crimson red for severe wildfires exceeding 100 MW).
+- **In-Depth Analytical Cards**:
+  - **Seasonal Burning Pattern**: Calculates peak fire windows and fire volume concentration across top burning months.
+  - **Multi-Year Trend & Trajectory**: 8-year annual comparison (2018–2025) with dynamic micro-sparklines and year-over-year escalation percentages.
+  - **Thermal Fire Strength**: FRP tier classification (Small & Agricultural Crop Clears, Medium Brushfires, and Large Emergency Wildfires).
+- **Side-by-Side Fire Comparison Tray**: Inspect and compare up to 4 selected fires with exact coordinates, dates, instruments, and radiative power.
+- **Reporting & Data Export**:
+  - Export filtered national and regional datasets to CSV.
+  - Export Comprehensive Printable Incident Briefings with synchronized satellite map snapshots, key metric cards, operational forestry guidance, and top fire listings.
+
+---
+
+## Project Structure & Architecture
+
+```
+Fireline/
+├── public/
+│   ├── global_country_analytics.json   # Pre-aggregated 8-year global intelligence dataset (200+ countries)
+│   ├── country_subdivisions.json       # Administrative boundaries and bounding boxes
+│   ├── analytics_data.json             # Core aggregated indices
+│   └── favicon.svg                     # Application branding icon
+├── src/
+│   ├── main.jsx                        # Complete React + MapLibre GL UI, analytics engine, and export pipeline
+│   └── style.css                       # Responsive theme styles (Dark / Light mode)
+├── pipeline/
+│   └── harmonize.py                    # DuckDB pipeline for ingesting and harmonizing bulk CSV datasets
+├── DATA_PROCESSING.md                  # Comprehensive guide on raw CSV ingestion and data extraction
+├── ARCHITECTURE.md                     # Technical architecture, dual-map decoupling, and export engine
+├── SUBMISSION.md                       # NASA Space Apps submission brief, challenge details, and methodology
+├── MANUAL.md                           # Operational and analytical manual
+└── README.md                           # Primary repository overview
 ```
 
-Place FIRMS bulk CSV files in `data/` (subfolders are scanned). Name them with their sensor and platform when possible, for example `MODIS_SP_2012.csv`, `VIIRS_SNPP_2020.csv`, `VIIRS_NOAA20_2022.csv`, or `VIIRS_NOAA21_2025.csv`. `VIIRS_SNPP`, `VIIRS_NOAA20`, and `VIIRS_NOAA21` all normalize to the common `VIIRS` sensor category; the `satellite` column retains `Suomi-NPP`, `NOAA-20`, or `NOAA-21` provenance. The overlap calibration uses the available MODIS and VIIRS records from 2012–2023; Suomi-NPP ending its mission on Nov 2, 2026 does not end the VIIRS series, since NOAA-20 and NOAA-21 remain in the same sensor stream.
+---
 
-```powershell
-python pipeline\harmonize.py
-python pipeline\harmonize.py --input data --output output --min-confidence high
-```
+## Data Pipeline: CSV Ingestion & Extraction
 
-DuckDB's CSV reader uses schema union and disk-backed relations. It does not load the source files into Python lists; only each 5,000-row JSON output batch is held in Python memory. Provide sufficient disk space for the database, temporary spill files, and exported artifacts. Source CSV columns may use FIRMS aliases such as `latitude`/`lat`, `longitude`/`lon`, `acq_date`, `confidence`, and `frp`.
+Fireline ingests raw bulk CSV archives provided by NASA FIRMS (Fire Information for Resource Management System):
+1. **Bulk Download**: VIIRS (375m) and MODIS (1km) CSV archives covering global fire activity from 2018 through 2025.
+2. **DuckDB Extraction & Filtering**: Multi-gigabyte CSV records are scanned using DuckDB out-of-core streaming without exhausting system memory.
+3. **Aggregation & Normalization**: Detections are assigned to country ISO codes and administrative boundaries, pre-aggregating monthly counts, radiative power distributions, and severe fire coordinates into `global_country_analytics.json`.
+4. Raw multi-gigabyte CSVs are never bundled in git to maintain repository security and performance.
 
-## Optional Global Offers
+For complete data ingestion commands and extraction details, see [DATA_PROCESSING.md](DATA_PROCESSING.md).
 
-Copy `.env.example` to `.env` and populate only the integrations you choose. Never commit `.env`.
+---
 
-```powershell
-Copy-Item .env.example .env
-```
+## Getting Started
 
-- `VITE_MAPBOX_ACCESS_TOKEN` enables the optional Mapbox dark basemap style through MapLibre. It is a **public browser token**, not a secret; restrict it to your approved origins/styles in Mapbox. If it is blank, Fireline uses its built-in MapLibre map and local land outline.
-- `WEATHER_API_KEY` is reserved for a server-side weather-data integration. It is intentionally not read by the browser; secrets must not use the `VITE_` prefix because Vite embeds those values in frontend assets.
-- `FIRMS_MAP_KEY` is reserved for a separate server-side integration. `pipeline/harmonize.py` performs no FIRMS Area API requests and consumes local bulk CSV files only.
+### Prerequisites
+- Node.js (v18+)
+- Python 3.10+ (for data ingestion pipeline)
 
-Restart Vite after changing `.env`. Do not put private weather/API credentials in `VITE_*` variables.
+### Installation & Run
 
-## Outputs
+1. Clone the repository and navigate to Fireline:
+   ```bash
+   git clone https://github.com/nithyashree-d-n/Fireline.git
+   cd Fireline
+   ```
 
-- `output/harmonized.duckdb`: normalized `observations` and deduplicated `harmonized_daily` tables, with sensor and satellite provenance.
-- `output/harmonized_hotspots.csv` and `.parquet`: harmonized cell-day archive.
-- `output/app_data.json` and `public/app_data.json`: metadata, monthly summaries, and map records consumed by Vite.
+2. Install frontend dependencies:
+   ```bash
+   npm install
+   ```
 
-See [MANUAL.md](MANUAL.md) for the calibration method, map use, confidence handling, and limitations.
+3. Launch the development server:
+   ```bash
+   npm run dev
+   ```
+
+4. Build for production:
+   ```bash
+   npm run build
+   ```
+
+---
+
+## Strict Directives & Policies
+- **Strict Zero Emoji Policy**: All documentation, code comments, and user interfaces adhere strictly to plain professional language without emojis.
+- **Coverage**: 2018–2025 across 200+ countries.
+- **Cartography**: Open basemaps powered by MapLibre GL and CartoDB (Dark Matter & Positron).
